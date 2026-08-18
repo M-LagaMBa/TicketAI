@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.3';
+  const TICKETAI_VERSION = '1.5';
 
   let presets = [];
   let searchQuery = "";
@@ -233,22 +233,13 @@
     return ok;
   }
 
-  // Anima a barra de progresso de forma contínua e suave (requestAnimationFrame),
-  // em vez de pular em saltos bruscos a cada campo concluído.
-  function animateProgress(bar, fromPct, toPct, durationMs) {
-    if (!bar) return Promise.resolve();
-    return new Promise((resolve) => {
-      const start = performance.now();
-      function tick(now) {
-        const elapsed = now - start;
-        const t = Math.min(1, elapsed / durationMs);
-        const pct = fromPct + (toPct - fromPct) * t;
-        bar.style.width = pct + '%';
-        if (t < 1) requestAnimationFrame(tick);
-        else resolve();
-      }
-      requestAnimationFrame(tick);
-    });
+  // Anima a barra de progresso via CSS (transition), não via
+  // requestAnimationFrame. O navegador pausa completamente o rAF quando a
+  // aba não está visível, o que travava todo o preenchimento até o usuário
+  // voltar pra aba — a transição de CSS não sofre essa pausa.
+  function setProgress(bar, pct) {
+    if (!bar) return;
+    bar.style.width = pct + '%';
   }
 
   // Preenche o preset inteiro na ordem correta (campos dependentes exigem
@@ -259,38 +250,35 @@
     const fields = ['descricao', 'produto', 'categoria', 'assunto'].filter(f => preset[f]);
     const totalSteps = Math.max(fields.length, 1);
     let doneSteps = 0;
-    let currentPct = 0;
-    const bump = (durationMs) => {
+    const bump = () => {
       doneSteps++;
       const target = Math.min(92, Math.round((doneSteps / totalSteps) * 92));
-      const from = currentPct;
-      currentPct = target;
-      animateProgress(progressBar, from, target, durationMs); // não bloqueia o preenchimento em si
+      setProgress(progressBar, target);
     };
 
     const results = { descricao: true, produto: true, categoria: true, assunto: true };
 
     if (preset.descricao) {
       const descInput = findFieldTextInput('Descrição do ticket');
-      if (descInput) { fillTextInput(descInput, preset.descricao); bump(280); await sleep(300); }
-      else { results.descricao = false; bump(280); }
+      if (descInput) { fillTextInput(descInput, preset.descricao); bump(); await sleep(300); }
+      else { results.descricao = false; bump(); }
     }
 
     if (preset.produto) {
       results.produto = await fillDropdownField('Produto', preset.produto);
-      bump(280);
+      bump();
       await sleep(300);
     }
 
     if (preset.categoria) {
       results.categoria = await fillDropdownField('Categoria', preset.categoria, { multi: true });
-      bump(280);
+      bump();
       await sleep(300);
     }
 
     if (preset.assunto) {
       results.assunto = await fillSearchField('Assunto', preset.assunto);
-      bump(200);
+      bump();
       await sleep(200);
     }
 
@@ -298,11 +286,11 @@
 
     const falhouAlgo = ['descricao', 'produto', 'categoria', 'assunto'].some(f => preset[f] && results[f] === false);
     if (card) {
-      await animateProgress(progressBar, currentPct, 100, 200);
+      setProgress(progressBar, 100);
       card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
       setTimeout(() => {
         card.classList.remove('ta-filled', 'ta-filled-warning');
-        if (progressBar) progressBar.style.width = '0%';
+        setProgress(progressBar, 0);
       }, 900);
     }
 
@@ -365,7 +353,7 @@
       .ta-preset-card:hover { background: #1E242C; }
       .ta-preset-card.ta-filled { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
       .ta-preset-card.ta-filled-warning { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
-      .ta-progress-bar { position: absolute; top: 0; left: 0; height: 2px; width: 0%; background: #F59E0B; border-radius: 2px 2px 0 0; }
+      .ta-progress-bar { position: absolute; top: 0; left: 0; height: 2px; width: 0%; background: #F59E0B; border-radius: 2px 2px 0 0; transition: width 0.28s ease; }
       .ta-card-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .ta-preset-name { font-size: 13px; font-weight: 500; color: #E6EDF3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; line-height: 1.3; }
       .ta-card-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -657,7 +645,9 @@
       drag = true; oX = e.clientX - widget.offsetLeft; oY = e.clientY - widget.offsetTop;
     };
     document.addEventListener('mousemove', (e) => {
-      if (drag) { widget.style.left = (e.clientX - oX) + 'px'; widget.style.top = (e.clientY - oY) + 'px'; widget.style.right = 'auto'; }
+      if (drag) {
+        widget.style.left = (e.clientX - oX) + 'px'; widget.style.top = (e.clientY - oY) + 'px'; widget.style.right = 'auto';
+      }
     });
     document.addEventListener('mouseup', () => {
       if (drag) { drag = false; saveGeometry(widget); }
@@ -666,21 +656,16 @@
 
 
   // Modo compacto: mostra 1 preset por vez, sem rodapé nem busca. Role o
-  // mouse sobre o card para passar para o próximo/anterior preset.
+  // mouse sobre o card para passar para o próximo/anterior preset. A posição
+  // (top/left) nunca é alterada automaticamente — fica exatamente onde o
+  // usuário colocou, em qualquer troca de modo. Se precisar reposicionar,
+  // o cabeçalho continua arrastável mesmo com o modo compacto ativo.
   function togglePeek(widget) {
     widget.classList.remove('is-minimized');
     widget.classList.add('ta-anim');
     widget.classList.toggle('is-peek');
     peekMode = widget.classList.contains('is-peek');
     peekIndex = 0;
-
-    // Se a posição salva do widget está muito colada no topo, ela pode ficar
-    // por cima da barra de navegação do Hubspot quando o widget encolhe no
-    // modo compacto. Empurra pra baixo automaticamente nesse caso (não salva
-    // essa posição — é só um ajuste visual do modo compacto).
-    if (peekMode && widget.offsetTop < 70) {
-      widget.style.top = '70px';
-    }
 
     setTimeout(() => widget.classList.remove('ta-anim'), 260);
     render();
