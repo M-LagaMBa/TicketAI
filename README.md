@@ -4,7 +4,7 @@
 
 **Classificação automática de tickets no Hubspot, a partir de presets**
 
-`Manifest V3` · `Edge / Chrome` · `v1.3`
+`Manifest V3` · `Edge / Chrome` · `v1.5`
 
 Desenvolvido por **Lagamba Tech**
 
@@ -144,6 +144,12 @@ ticketai/
 - ⌨️ Novo atalho `Alt+W` para abrir/fechar o modo compacto.
 - ⎋ Menu de opções (engrenagem) agora também fecha pressionando `Esc`, além de clicar fora ou no botão de fechar.
 - 🎨 Ícone oficial da extensão e logo em SVG (pasta `logo/` e `icons/`), prontos para uso na barra de ferramentas do navegador.
+
+### v1.5 — Estabilidade em segundo plano e posição do widget
+
+**Corrigido**
+- 🐛 O widget podia mudar de posição sozinho ao ativar ou desativar o modo compacto (o ajuste automático da v1.3 para evitar sobrepor a barra do Hubspot ficava "preso" depois, deslocando o widget permanentemente). Removido de vez: a posição agora só muda se o usuário arrastar o widget manualmente, em qualquer modo (normal, minimizado ou compacto).
+- 🐛 O preenchimento de um preset travava por completo se o usuário trocasse de aba do navegador durante o processo, retomando só quando voltava para a aba do Hubspot. Causa: a barra de progresso usava `requestAnimationFrame`, que o navegador pausa totalmente quando a aba não está visível, e o preenchimento ficava esperando essa animação terminar antes de seguir para o próximo campo. A barra passou a usar `transition` de CSS, sem depender de `requestAnimationFrame`, e o preenchimento não espera mais por ela — agora continua rodando normalmente mesmo com a aba do Hubspot em segundo plano.
 
 ---
 
