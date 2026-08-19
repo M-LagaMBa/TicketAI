@@ -2,7 +2,17 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.5';
+  const TICKETAI_VERSION = '1.6';
+
+  // Log leve de tempo de cada etapa do preenchimento, só aparece no console
+  // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
+  // dado real do ambiente de cada usuário, sem precisar de instrumentação à parte.
+  const TA_DEBUG_TIMING = true;
+  function debugLog(label, startTime) {
+    if (!TA_DEBUG_TIMING) return;
+    const elapsed = Math.round(performance.now() - startTime);
+    console.debug(`[TicketAI] ${label}: ${elapsed}ms`);
+  }
 
   let presets = [];
   let searchQuery = "";
@@ -148,6 +158,18 @@
     return null;
   }
 
+  // Versões "espera até existir" das duas buscas acima. Campos dependentes
+  // (Categoria só aparece depois do Produto, Assunto só depois da Categoria)
+  // não estão prontos no instante em que terminamos o campo anterior — em
+  // vez de uma pausa fixa "no escuro", ficamos checando a cada poucos
+  // milissegundos até o campo realmente existir, ou desistimos no timeout.
+  function waitForFieldButton(labelText, timeoutMs = 2000) {
+    return waitFor(() => findFieldButton(labelText), timeoutMs, 60);
+  }
+  function waitForFieldTextInput(labelText, timeoutMs = 2000) {
+    return waitFor(() => findFieldTextInput(labelText), timeoutMs, 60);
+  }
+
   // Preenche um campo de texto livre disparando os eventos que o React espera.
   function fillTextInput(input, text) {
     const proto = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -158,11 +180,30 @@
     input.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
+  // Localiza o container da lista de opções que está aberta no momento
+  // (Produto, Categoria e Assunto usam esse mesmo tipo de container). Se
+  // houver mais de um na página por algum motivo, usa o último renderizado,
+  // que é sempre o mais recente/o que está aberto agora.
+  function getOpenDropdownContainer() {
+    const candidates = document.querySelectorAll('.Select-menu');
+    return candidates.length ? candidates[candidates.length - 1] : null;
+  }
+
   // Clica no elemento (botão, checkbox ou div com título) cujo atributo
   // title ou data-option-value bate com o texto da opção desejada.
+  // Busca só dentro da lista aberta, não na página inteira: um valor comum
+  // (ex: "Dúvida") pode coincidir com outro elemento qualquer do Hubspot que
+  // tenha o mesmo texto, fazendo clicar no lugar errado.
   async function selectOptionByText(text) {
     const sel = `[title="${cssEscapeValue(text)}"], [data-option-value="${cssEscapeValue(text)}"]`;
-    const el = await waitFor(() => document.querySelector(sel), 3000);
+    const el = await waitFor(() => {
+      const scope = getOpenDropdownContainer();
+      if (scope) {
+        const found = scope.querySelector(sel);
+        if (found) return found;
+      }
+      return document.querySelector(sel); // fallback, caso a estrutura não bata com o esperado
+    }, 3000);
     if (!el) return false;
     simulateClick(el);
     return true;
@@ -174,6 +215,9 @@
   // Usamos o setter nativo + evento "change" (técnica padrão para forçar
   // atualização de componentes React controlados), em vez de depender só
   // de clique simulado, que nem sempre alterna o estado de forma confiável.
+  // Entre um desmarque e outro, espera CONFIRMAR que desmarcou (em vez de um
+  // tempo fixo) — geralmente mais rápido, e não trava se demorar um pouco
+  // mais que o normal, até um teto de segurança de 300ms por checkbox.
   async function clearMultiSelection(container) {
     const checkboxSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked').set;
     const checkboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
@@ -182,7 +226,7 @@
       checkboxSetter.call(cb, false);
       cb.dispatchEvent(new Event('click', { bubbles: true }));
       cb.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(120);
+      await waitFor(() => !cb.checked, 300, 20);
     }
   }
 
@@ -190,46 +234,60 @@
   // Passe { multi: true } para campos de múltipla seleção (ex: Categoria):
   // nesse caso, desmarca qualquer opção já selecionada antes de marcar a nova,
   // evitando que o preset anterior deixe categorias "presas" junto com a nova.
+  //
+  // Não há mais pausa fixa "no escuro" à espera do campo ou da lista
+  // aparecerem: cada etapa espera SÓ o tempo que realmente precisar
+  // (waitFor), com um teto de segurança generoso pra não falhar em
+  // conexões/computadores mais lentos. O único delay fixo que resta (80ms,
+  // logo após o clique que abre o dropdown) é uma margem de segurança
+  // contra a animação de abertura do Hubspot, não uma espera de conteúdo.
   async function fillDropdownField(labelText, valueText, opts = {}) {
     if (!valueText) return true;
-    const btn = findFieldButton(labelText);
-    if (!btn) return false;
+    const t0 = performance.now();
+    const btn = await waitForFieldButton(labelText);
+    if (!btn) { debugLog(`"${labelText}": campo não encontrado`, t0); return false; }
 
     if (btn.getAttribute('data-dropdown-open') !== 'true') {
       simulateClick(btn);
+      await sleep(80);
     }
-    await sleep(250);
 
     if (opts.multi) {
-      const container = document.querySelector('.Select--multi');
+      const container = await waitFor(
+        () => document.querySelector('.Select--multi.is-open') || document.querySelector('.Select--multi'),
+        1500, 50
+      );
       if (container) await clearMultiSelection(container);
     }
 
     const ok = await selectOptionByText(valueText);
+    debugLog(`"${labelText}" preenchido`, t0);
     return ok;
   }
 
   // Campo de busca (Assunto): abre, digita para filtrar, e clica no resultado.
+  // Mesma lógica: sem pausas fixas, só esperas condicionais com teto de segurança.
   async function fillSearchField(labelText, valueText) {
     if (!valueText) return true;
-    const btn = findFieldButton(labelText);
-    if (!btn) return false;
+    const t0 = performance.now();
+    const btn = await waitForFieldButton(labelText);
+    if (!btn) { debugLog(`"${labelText}": campo não encontrado`, t0); return false; }
 
     if (btn.getAttribute('data-dropdown-open') !== 'true') {
       simulateClick(btn);
+      await sleep(80);
     }
-    await sleep(250);
 
     const searchInput = await waitFor(
       () => document.querySelector('input[placeholder="Pesquisar"]'),
-      2000
+      2000, 60
     );
     if (searchInput) {
       fillTextInput(searchInput, valueText);
-      await sleep(400);
     }
 
     const ok = await selectOptionByText(valueText);
+    debugLog(`"${labelText}" preenchido`, t0);
     return ok;
   }
 
@@ -245,7 +303,12 @@
   // Preenche o preset inteiro na ordem correta (campos dependentes exigem
   // que cada etapa termine antes de abrir a próxima). Anima uma barra de
   // progresso discreta no card enquanto roda, e pisca o card ao concluir.
+  // Não há mais pausas fixas entre um campo e outro: cada função de
+  // preenchimento já espera o campo seguinte existir antes de agir nele
+  // (waitForFieldButton/waitForFieldTextInput), então a espera acontece só
+  // quando e pelo tempo que for realmente necessário.
   async function applyPresetToCard(preset, card) {
+    const t0 = performance.now();
     const progressBar = card ? card.querySelector('.ta-progress-bar') : null;
     const fields = ['descricao', 'produto', 'categoria', 'assunto'].filter(f => preset[f]);
     const totalSteps = Math.max(fields.length, 1);
@@ -259,32 +322,30 @@
     const results = { descricao: true, produto: true, categoria: true, assunto: true };
 
     if (preset.descricao) {
-      const descInput = findFieldTextInput('Descrição do ticket');
-      if (descInput) { fillTextInput(descInput, preset.descricao); bump(); await sleep(300); }
+      const descInput = await waitForFieldTextInput('Descrição do ticket');
+      if (descInput) { fillTextInput(descInput, preset.descricao); bump(); }
       else { results.descricao = false; bump(); }
     }
 
     if (preset.produto) {
       results.produto = await fillDropdownField('Produto', preset.produto);
       bump();
-      await sleep(300);
     }
 
     if (preset.categoria) {
       results.categoria = await fillDropdownField('Categoria', preset.categoria, { multi: true });
       bump();
-      await sleep(300);
     }
 
     if (preset.assunto) {
       results.assunto = await fillSearchField('Assunto', preset.assunto);
       bump();
-      await sleep(200);
     }
 
     simulateClick(document.body); // fecha qualquer dropdown que tenha ficado aberto
 
     const falhouAlgo = ['descricao', 'produto', 'categoria', 'assunto'].some(f => preset[f] && results[f] === false);
+    debugLog(`preset "${preset.name}" concluído${falhouAlgo ? ' (com falha parcial)' : ''}`, t0);
     if (card) {
       setProgress(progressBar, 100);
       card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
@@ -332,6 +393,11 @@
       .ta-header span.ta-title .ta-title-ticket { color: #E6EDF3; }
       .ta-header span.ta-title .ta-title-ai { color: #F59E0B; }
       .ta-btn-group { display: flex; gap: 10px; z-index: 10002; align-items: center; }
+      .ta-help-popover { position: absolute; top: calc(100% + 8px); right: 0; background: #161B22; border: 1px solid #2A313B; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 220px; box-shadow: 0 16px 34px rgba(0,0,0,0.55); opacity: 0; transform: translateY(-6px) scale(0.97); pointer-events: none; transition: 0.18s ease; z-index: 10010; cursor: default; }
+      .ta-help-popover.is-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+      .ta-help-title { font-size: 10px; font-weight: 800; color: #9BA4B5; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 2px; }
+      .ta-help-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: #E6EDF3; }
+      .ta-help-key { font-size: 10px; font-weight: 700; color: #F59E0B; background: rgba(245,158,11,0.12); border-radius: 5px; padding: 2px 6px; flex-shrink: 0; white-space: nowrap; }
       .ta-h-btn { cursor: pointer; font-size: 13px; opacity: 0.55; transition: 0.2s; line-height: 1; color: #9BA4B5; }
       .ta-h-btn:hover { opacity: 1; color: #E6EDF3; }
       .ta-h-btn#ta-btn-close:hover { color: #EF4444; }
@@ -460,6 +526,16 @@
       <div class="ta-header" id="ta-drag-h">
         <span class="ta-title"><span class="ta-title-ticket">Ticket</span><span class="ta-title-ai">AI</span></span>
         <div class="ta-btn-group">
+          <div class="ta-h-btn ta-help-wrap" style="position:relative;">
+            <span id="ta-btn-help" title="Atalhos de teclado">?</span>
+            <div class="ta-help-popover" id="ta-help-popover">
+              <div class="ta-help-title">Atalhos de teclado</div>
+              <div class="ta-help-row"><span class="ta-help-key">Alt + Q</span><span>Abrir / minimizar / maximizar</span></div>
+              <div class="ta-help-row"><span class="ta-help-key">Alt + W</span><span>Modo compacto</span></div>
+              <div class="ta-help-row"><span class="ta-help-key">Ctrl + N</span><span>Novo preset</span></div>
+              <div class="ta-help-row"><span class="ta-help-key">Esc</span><span>Fechar menus e modais</span></div>
+            </div>
+          </div>
           <div class="ta-h-btn" id="ta-btn-peek" title="Modo compacto (mostra 1 preset por vez, role o mouse para trocar) — Alt+W">▤</div>
           <div class="ta-h-btn" id="ta-btn-min" title="Minimizar">–</div>
           <div class="ta-h-btn" id="ta-btn-close" title="Fechar">✕</div>
@@ -684,6 +760,21 @@
     document.getElementById('ta-btn-peek').onclick = (e) => { e.stopPropagation(); togglePeek(widget); };
     document.getElementById('ta-btn-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(widget); };
     document.getElementById('ta-btn-close').onclick = () => widget.style.display = 'none';
+
+    const helpBtn = document.getElementById('ta-btn-help');
+    const helpPopover = document.getElementById('ta-help-popover');
+    helpBtn.onclick = (e) => {
+      e.stopPropagation();
+      helpPopover.classList.toggle('is-open');
+    };
+    document.addEventListener('click', (e) => {
+      if (!helpPopover.classList.contains('is-open')) return;
+      if (e.target.closest('#ta-help-popover') || e.target.closest('#ta-btn-help')) return;
+      helpPopover.classList.remove('is-open');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && helpPopover.classList.contains('is-open')) helpPopover.classList.remove('is-open');
+    });
   }
 
   // Rolar o mouse dentro do modo compacto avança/retrocede um preset por vez.

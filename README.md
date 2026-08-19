@@ -4,7 +4,7 @@
 
 **Classificação automática de tickets no Hubspot, a partir de presets**
 
-`Manifest V3` · `Edge / Chrome` · `v1.5`
+`Manifest V3` · `Edge / Chrome` · `v1.6`
 
 Desenvolvido por **Lagamba Tech**
 
@@ -145,11 +145,37 @@ ticketai/
 - ⎋ Menu de opções (engrenagem) agora também fecha pressionando `Esc`, além de clicar fora ou no botão de fechar.
 - 🎨 Ícone oficial da extensão e logo em SVG (pasta `logo/` e `icons/`), prontos para uso na barra de ferramentas do navegador.
 
+### v1.4 — Primeiro ajuste de posição do modo compacto
+
+**Corrigido**
+- 🐛 No modo compacto, se o widget estivesse posicionado muito perto do topo da página, ele podia ficar por cima da barra de navegação do Hubspot. Adicionado um ajuste automático: ao entrar no modo compacto nessa situação, o widget era empurrado um pouco para baixo, guardando a posição original para restaurar exatamente ao sair do modo compacto.
+
+> Esse ajuste automático ainda causava uma mudança de posição perceptível *durante* o modo compacto (mesmo restaurando depois). Foi substituído por uma solução mais direta na v1.5 — ver abaixo.
+
 ### v1.5 — Estabilidade em segundo plano e posição do widget
 
 **Corrigido**
 - 🐛 O widget podia mudar de posição sozinho ao ativar ou desativar o modo compacto (o ajuste automático da v1.3 para evitar sobrepor a barra do Hubspot ficava "preso" depois, deslocando o widget permanentemente). Removido de vez: a posição agora só muda se o usuário arrastar o widget manualmente, em qualquer modo (normal, minimizado ou compacto).
 - 🐛 O preenchimento de um preset travava por completo se o usuário trocasse de aba do navegador durante o processo, retomando só quando voltava para a aba do Hubspot. Causa: a barra de progresso usava `requestAnimationFrame`, que o navegador pausa totalmente quando a aba não está visível, e o preenchimento ficava esperando essa animação terminar antes de seguir para o próximo campo. A barra passou a usar `transition` de CSS, sem depender de `requestAnimationFrame`, e o preenchimento não espera mais por ela — agora continua rodando normalmente mesmo com a aba do Hubspot em segundo plano.
+
+### v1.6 — Correção de seleção, ícone da extensão e ajuda rápida
+
+**Corrigido**
+- 🐛 Presets com o valor "Dúvida" na Categoria não marcavam o campo corretamente, mesmo com outros valores (ex: "Indevido", "Solicitação de serviço") funcionando normalmente. Causa: a busca pela opção a clicar vasculhava a página inteira, e "Dúvida" coincidia com outro elemento qualquer do Hubspot com o mesmo texto, clicando no lugar errado. A busca agora é restrita ao container da lista realmente aberta no momento.
+- 🐛 Clicar no ícone da extensão na barra de ferramentas nem sempre abria o widget. O `background.js` agora garante que o `content.js` está carregado na página antes de mandar o comando de abrir, em vez de só tentar como reação a uma falha de mensagem.
+- 🔒 Removida a permissão `activeTab` do `manifest.json` — não é aceita pela Microsoft Store, e era redundante já que a extensão usa `host_permissions` fixo para o domínio do Hubspot.
+
+**Adicionado**
+- ❓ Ícone de ajuda ("?") no cabeçalho, ao lado dos botões de compacto/minimizar/fechar, com um resumo dos atalhos de teclado disponíveis (`Alt+Q`, `Alt+W`, `Ctrl+N`, `Esc`). Fecha clicando fora ou pressionando `Esc`.
+
+**Otimizado**
+- ⚡ Removidas as pausas fixas entre os campos do preenchimento (Descrição → Produto → Categoria → Assunto). Antes, cada transição esperava um tempo cego (200-300ms) na esperança de que o próximo campo já tivesse aparecido; agora cada etapa espera *só* o campo dela realmente existir (`waitFor`), com um teto de segurança generoso (até 2s) para não falhar em conexões ou computadores mais lentos.
+- ⚡ Detecção do campo de múltipla seleção (Categoria) trocada de "pausa fixa + checagem única" para espera ativa até o container realmente existir — mais rápido no caso comum, e mais confiável em conexões lentas (o valor fixo anterior podia ser curto demais nesses casos).
+- ⚡ Removida a pausa fixa de 400ms após digitar no campo de busca do Assunto — a etapa seguinte já espera pela opção certa aparecer, tornando essa pausa redundante.
+- ⚡ Delay fixo por checkbox ao limpar a Categoria (120ms) trocado por confirmação ativa de que o checkbox realmente desmarcou, com teto de segurança de 300ms.
+- 🔍 Adicionado log opcional de tempo de cada etapa do preenchimento no console do navegador (F12), para ajudar a calibrar os tempos com dados reais do ambiente de cada usuário. Pode ser desligado trocando `TA_DEBUG_TIMING` para `false` no início do `content.js`.
+
+> Nenhum comportamento de preenchimento foi alterado — só a forma de esperar entre uma etapa e outra, que passou de "tempo fixo" para "até a etapa seguinte realmente estar pronta".
 
 ---
 
