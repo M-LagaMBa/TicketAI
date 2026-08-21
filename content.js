@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.6';
+  const TICKETAI_VERSION = '1.7 BETA';
 
   // Log leve de tempo de cada etapa do preenchimento, só aparece no console
   // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
@@ -170,6 +170,67 @@
     return waitFor(() => findFieldTextInput(labelText), timeoutMs, 60);
   }
 
+
+  // ---------------------------------------------------------------------
+  // BETA 1 - LEITURA DA CLASSIFICAÇÃO ATUAL DO HUBSPOT
+  // ---------------------------------------------------------------------
+  // Esta função é experimental e NÃO altera a classificação do ticket.
+  // Ela apenas inspeciona o modal "Propriedades dependentes" e mostra no
+  // console os elementos que podem representar os campos de classificação.
+  function readCurrentClassification() {
+    console.group('%cTicketAI - Leitura da classificação', 'color:#F59E0B;font-weight:bold;');
+
+    const modal = Array.from(document.querySelectorAll('[role="dialog"]'))
+      .find(el => /propriedades dependentes/i.test(el.innerText || ''));
+
+    if (!modal) {
+      console.warn('TicketAI: modal "Propriedades dependentes" não encontrado.');
+      console.groupEnd();
+      return [];
+    }
+
+    const dependentScope = modal.querySelector('[data-test-id="hs_pipeline_stage-dependents"]') || modal;
+    const controls = Array.from(dependentScope.querySelectorAll('[data-test-id="FormControl"]'));
+    const results = [];
+
+    controls.forEach(control => {
+      const label = (control.querySelector('.FormControl__StyledInnerLabel-kxPGLN')?.textContent || '').trim();
+      if (!label) return;
+
+      const textarea = control.querySelector('textarea');
+      if (textarea) {
+        results.push({ index: results.length + 1, label, value: textarea.value || '', type: 'textarea' });
+        return;
+      }
+
+      const input = control.querySelector('input');
+      if (input) {
+        results.push({ index: results.length + 1, label, value: input.value || '', type: 'input' });
+        return;
+      }
+
+      const selected = [...new Set(
+        Array.from(control.querySelectorAll('[data-option-text="true"]'))
+          .map(el => (el.textContent || '').trim())
+          .filter(Boolean)
+      )];
+
+      results.push({
+        index: results.length + 1,
+        label,
+        value: selected.length > 1 ? selected : (selected[0] || ''),
+        type: /categoria/i.test(label) ? 'multi' : 'dropdown'
+      });
+    });
+
+    console.log(`Campos encontrados: ${results.length}`);
+    console.table(results);
+    console.log('Classificação estruturada:', results);
+    console.groupEnd();
+    return results;
+  }
+
+
   // Preenche um campo de texto livre disparando os eventos que o React espera.
   function fillTextInput(input, text) {
     const proto = input.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -310,6 +371,93 @@
   async function applyPresetToCard(preset, card) {
     const t0 = performance.now();
     const progressBar = card ? card.querySelector('.ta-progress-bar') : null;
+
+    // Presets criados pela Beta usam a estrutura dinâmica `fields`.
+    // Presets antigos continuam usando descricao/produto/categoria/assunto.
+    if (Array.isArray(preset.fields)) {
+      const fields = preset.fields.filter(field => {
+        if (!field || !field.label) return false;
+        if (Array.isArray(field.value)) return field.value.some(Boolean);
+        return String(field.value || '').trim() !== '';
+      });
+
+      const totalSteps = Math.max(fields.length, 1);
+      let doneSteps = 0;
+      const bump = () => {
+        doneSteps++;
+        const target = Math.min(92, Math.round((doneSteps / totalSteps) * 92));
+        setProgress(progressBar, target);
+      };
+
+      const results = {};
+
+      for (const field of fields) {
+        let value = field.value;
+        let ok = true;
+
+        if (Array.isArray(value)) {
+          value = value.filter(Boolean);
+        }
+
+        if (!value || (Array.isArray(value) && value.length === 0)) {
+          bump();
+          continue;
+        }
+
+        const type = field.type || 'dropdown';
+
+        if (type === 'textarea' || type === 'input') {
+          const input = await waitForFieldTextInput(field.label);
+          if (input) {
+            fillTextInput(
+              input,
+              Array.isArray(value) ? value.join(', ') : String(value)
+            );
+          } else {
+            ok = false;
+          }
+        } else if (type === 'search') {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (item) ok = await fillSearchField(field.label, item) && ok;
+            }
+          } else {
+            ok = await fillSearchField(field.label, String(value));
+          }
+        } else if (type === 'multi') {
+          ok = await fillDynamicMultiField(field.label, value);
+        } else {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (item) ok = await fillDropdownField(field.label, item) && ok;
+            }
+          } else {
+            ok = await fillDropdownField(field.label, String(value));
+          }
+        }
+
+        results[field.label] = ok;
+        bump();
+      }
+
+      simulateClick(document.body);
+
+      const falhouAlgo = Object.values(results).some(v => v === false);
+      debugLog(`preset "${preset.name}" concluído${falhouAlgo ? ' (com falha parcial)' : ''}`, t0);
+
+      if (card) {
+        setProgress(progressBar, 100);
+        card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
+        setTimeout(() => {
+          card.classList.remove('ta-filled', 'ta-filled-warning');
+          setProgress(progressBar, 0);
+        }, 900);
+      }
+
+      return results;
+    }
+
+    // Compatibilidade com presets antigos.
     const fields = ['descricao', 'produto', 'categoria', 'assunto'].filter(f => preset[f]);
     const totalSteps = Math.max(fields.length, 1);
     let doneSteps = 0;
@@ -342,7 +490,7 @@
       bump();
     }
 
-    simulateClick(document.body); // fecha qualquer dropdown que tenha ficado aberto
+    simulateClick(document.body);
 
     const falhouAlgo = ['descricao', 'produto', 'categoria', 'assunto'].some(f => preset[f] && results[f] === false);
     debugLog(`preset "${preset.name}" concluído${falhouAlgo ? ' (com falha parcial)' : ''}`, t0);
@@ -357,6 +505,208 @@
 
     return results;
   }
+
+  // Preenche um campo de múltipla seleção com uma ou várias opções.
+  async function fillDynamicMultiField(labelText, values) {
+    const list = Array.isArray(values) ? values.filter(Boolean) : [values].filter(Boolean);
+    if (list.length === 0) return true;
+
+    const btn = await waitForFieldButton(labelText);
+    if (!btn) return false;
+
+    if (btn.getAttribute('data-dropdown-open') !== 'true') {
+      simulateClick(btn);
+      await sleep(80);
+    }
+
+    const container = await waitFor(
+      () => document.querySelector('.Select--multi.is-open') || document.querySelector('.Select--multi'),
+      1500, 50
+    );
+
+    if (container) await clearMultiSelection(container);
+
+    let ok = true;
+
+    for (const value of list) {
+      if (btn.getAttribute('data-dropdown-open') !== 'true') {
+        simulateClick(btn);
+        await sleep(80);
+      }
+
+      const selected = await selectOptionByText(String(value));
+      ok = selected && ok;
+      await sleep(50);
+    }
+
+    return ok;
+  }
+
+  // ---------------------------------------------------------------------
+  // PRESETS DINÂMICOS - BETA
+  // ---------------------------------------------------------------------
+
+  function normalizeBetaField(field) {
+    const value = Array.isArray(field?.value)
+      ? field.value.filter(v => String(v || '').trim() !== '')
+      : String(field?.value || '');
+    return {
+      label: String(field?.label || '').trim(),
+      value,
+      type: field?.type || betaInferTypeFromLabel(field?.label || '', 'dropdown'),
+      enabled: field?.enabled !== false
+    };
+  }
+
+  function betaFieldDisplayValue(field) {
+    if (Array.isArray(field.value)) return field.value.join(', ');
+    return String(field.value || '');
+  }
+
+  function betaInferTypeFromLabel(label, currentType) {
+    if (currentType && currentType !== 'dropdown') return currentType;
+    if (/descrição/i.test(label)) return 'textarea';
+    if (/categoria/i.test(label)) return 'multi';
+    if (/assunto/i.test(label)) return 'search';
+    return currentType || 'dropdown';
+  }
+
+  function betaLegacyFields(preset) {
+    if (!preset) {
+      return [
+        { label: 'Descrição do ticket', value: '', type: 'textarea', enabled: true },
+        { label: 'Produto', value: '', type: 'dropdown', enabled: true },
+        { label: 'Categoria', value: '', type: 'multi', enabled: true },
+        { label: 'Assunto', value: '', type: 'search', enabled: true }
+      ];
+    }
+    return [
+      { label: 'Descrição do ticket', value: preset.descricao || '', type: 'textarea', enabled: !!preset.descricao },
+      { label: 'Produto', value: preset.produto || '', type: 'dropdown', enabled: !!preset.produto },
+      { label: 'Categoria', value: preset.categoria || '', type: 'multi', enabled: !!preset.categoria },
+      { label: 'Assunto', value: preset.assunto || '', type: 'search', enabled: !!preset.assunto }
+    ];
+  }
+
+  function openUnifiedPresetModal(preset = null, initialFields = null) {
+    const overlay = document.getElementById('ta-modal-overlay');
+    const modal = overlay?.querySelector('.ta-modal');
+    if (!overlay || !modal) return;
+
+    const isEditing = !!preset;
+    let fields = (initialFields || []).map(normalizeBetaField);
+    let mode = Array.isArray(preset?.fields) ? 'hubspot' : 'manual';
+
+    modal.style.cssText = `width:100%;height:100%;max-width:none;max-height:none;padding:0;display:flex;flex-direction:column;overflow:hidden;background:#0D1117;color:#E6EDF3;border:0;border-radius:14px;box-shadow:none;`;
+    modal.innerHTML = `
+      <div class="ta-newpreset-header">
+        <div class="ta-newpreset-heading">
+          <span class="ta-newpreset-title-icon">${isEditing ? '✎' : '+'}</span>
+          <div>
+            <div class="ta-newpreset-title">${isEditing ? 'Editar preset' : 'Novo preset'}</div>
+            <div class="ta-newpreset-subtitle">Crie manualmente ou importe a classificação atual.</div>
+          </div>
+        </div>
+        <button id="ta-unified-close" class="ta-newpreset-close" type="button" aria-label="Fechar">×</button>
+      </div>
+      <div class="ta-newpreset-body">
+        <section class="ta-newpreset-section">
+          <div class="ta-newpreset-section-title"><span>1</span><strong>Informações</strong></div>
+          <div class="ta-newpreset-grid">
+            <div class="ta-newpreset-main-field">
+              <div class="ta-newpreset-label">Nome do preset</div>
+              <input id="ta-unified-name" class="ta-newpreset-input" type="text" value="${String(preset?.name || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Ex.: Atualização cadastral">
+            </div>
+            <div class="ta-newpreset-main-field">
+              <div class="ta-newpreset-label">Grupo</div>
+              <input id="ta-unified-group" class="ta-newpreset-input" type="text" value="${String(preset?.group || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Ex.: E-MAIL">
+            </div>
+          </div>
+        </section>
+
+        <section class="ta-newpreset-section">
+          <div class="ta-newpreset-section-title"><span>2</span><strong>Origem do preset</strong></div>
+          <button id="ta-mode-hubspot" class="ta-newpreset-mode" type="button">
+            <span class="ta-newpreset-mode-icon">🔍</span>
+            <span><strong>Ler classificação atual</strong><small>Importe os campos e valores já preenchidos no HubSpot.</small></span>
+          </button>
+          <div class="ta-newpreset-origin-legend">Leia a classificação atual do HubSpot e ajuste os campos antes de salvar.</div>
+          <div id="ta-unified-status" class="ta-newpreset-status"></div>
+        </section>
+
+        <section class="ta-newpreset-section ta-newpreset-fields-section">
+          <div class="ta-newpreset-section-head">
+            <div class="ta-newpreset-section-title"><span>3</span><strong>Campos</strong></div>
+            <span id="ta-unified-count" class="ta-newpreset-count"></span>
+          </div>
+          <div class="ta-newpreset-help">Selecione os campos e ajuste os valores que o preset deverá aplicar.</div>
+          <div id="ta-unified-fields" class="ta-newpreset-fields"></div>
+          <button id="ta-unified-add" class="ta-newpreset-add" type="button">＋ Adicionar campo</button>
+        </section>
+      </div>
+      <div class="ta-newpreset-footer"><button id="ta-unified-cancel" class="ta-newpreset-cancel" type="button">Cancelar</button><button id="ta-unified-save" class="ta-newpreset-save" type="button">Salvar</button></div>
+    `;
+
+    const fieldsContainer = modal.querySelector('#ta-unified-fields');
+    const countEl = modal.querySelector('#ta-unified-count');
+    const statusEl = modal.querySelector('#ta-unified-status');
+    const hubspotBtn = modal.querySelector('#ta-mode-hubspot');
+
+    const setStatus = (text='', kind='') => { statusEl.textContent=text; statusEl.className='ta-newpreset-status'+(kind?' '+kind:''); };
+    const syncModes = () => { if (hubspotBtn) hubspotBtn.classList.toggle('is-active', mode === 'hubspot'); };
+
+    function renderFields() {
+      fieldsContainer.innerHTML='';
+      countEl.textContent=`${fields.filter(f=>f.enabled!==false).length}/${fields.length} selecionado${fields.length===1?'':'s'}`;
+      if(!fields.length){const e=document.createElement('div');e.className='ta-newpreset-empty';e.textContent='Nenhum campo adicionado. Clique em “＋ Adicionar campo”.';fieldsContainer.appendChild(e);return;}
+      fields.forEach((field,index)=>{
+        const row=document.createElement('div');row.className='ta-newpreset-field'+(field.enabled===false?' is-disabled':'');
+        const top=document.createElement('div');top.className='ta-newpreset-field-top';
+        const check=document.createElement('input');check.type='checkbox';check.checked=field.enabled!==false;check.onchange=()=>{field.enabled=check.checked;renderFields();};
+        const order=document.createElement('span');order.className='ta-newpreset-order';order.textContent=index+1;
+        const label=document.createElement('div');label.className='ta-field-label-text';label.textContent=field.label||'Campo sem nome';
+        const remove=document.createElement('button');remove.type='button';remove.className='ta-newpreset-remove';remove.innerHTML='<span aria-hidden="true">×</span>';remove.title='Remover campo';remove.setAttribute('aria-label','Remover campo');remove.onclick=()=>{fields.splice(index,1);renderFields();};
+        top.append(check,order,label,remove);
+        const bottom=document.createElement('div');bottom.className='ta-newpreset-field-bottom';
+        field.type=betaInferTypeFromLabel(field.label,field.type);
+        const value=document.createElement('input');
+        value.type='text';
+        value.className='ta-newpreset-input ta-field-value-input';
+        value.value=betaFieldDisplayValue(field);
+        value.placeholder=field.type==='multi'?'Valores separados por vírgula':'Valor do campo';
+        value.oninput=()=>field.value=field.type==='multi'?value.value.split(',').map(v=>v.trim()).filter(Boolean):value.value;
+        bottom.append(value);
+        row.append(top,bottom);
+        fieldsContainer.appendChild(row);
+      });
+    }
+
+    const readHubspot=()=>{
+      const detected=readCurrentClassification();
+      if(!detected.length){setStatus('Abra primeiro o modal “Propriedades dependentes” no HubSpot.','error');return;}
+      fields=detected.map(f=>normalizeBetaField({...f,enabled:String(betaFieldDisplayValue(f)).trim()!==''&&!/proprietário do ticket/i.test(f.label)}));
+      mode='hubspot';syncModes();renderFields();setStatus(`✓ ${fields.length} campos encontrados. Revise antes de salvar.`,'success');
+    };
+
+    if (hubspotBtn) hubspotBtn.onclick=readHubspot;
+    modal.querySelector('#ta-unified-add').onclick=()=>{fields.push({label:'',value:'',type:'dropdown',enabled:true});renderFields();const labels=fieldsContainer.querySelectorAll('.ta-field-label-input');if(labels.length)labels[labels.length-1].focus();};
+    modal.querySelector('#ta-unified-close').onclick=closeModal;
+    modal.querySelector('#ta-unified-cancel').onclick=closeModal;
+    modal.querySelector('#ta-unified-save').onclick=async()=>{
+      const name=modal.querySelector('#ta-unified-name').value.trim();
+      const group=modal.querySelector('#ta-unified-group').value.trim()||'GERAL';
+      if(!name){await showAlertModal('Informe um nome para o preset.');return;}
+      const clean=fields.map(normalizeBetaField).filter(f=>f.label&&f.enabled);
+      if(!clean.length){await showAlertModal('Adicione ou selecione pelo menos um campo para salvar o preset.');return;}
+      const data={name,group,fields:clean};
+      if(isEditing){const existing=presets.find(x=>x.id===preset.id);if(existing)Object.assign(existing,data);}else{presets.push({id:generateId(),...data});}
+      closeModal();save();
+    };
+
+    overlay.classList.add('is-visible');syncModes();renderFields();setStatus(mode==='hubspot'?'Preset dinâmico: revise os campos antes de salvar.':'',mode==='hubspot'?'success':'');
+    setTimeout(()=>modal.querySelector('#ta-unified-name')?.focus(),0);
+  }
+
 
   // ---------------------------------------------------------------------
   // ESTILOS
@@ -483,30 +833,487 @@
       .ta-undo-toast.is-visible { max-height: 40px; opacity: 1; margin-bottom: 10px; padding: 9px 12px; }
       .ta-undo-toast button { background: none; border: none; color: #F59E0B; font-weight: 800; cursor: pointer; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; flex-shrink: 0; }
       .ta-undo-toast button:hover { text-decoration: underline; }
-      .ta-modal-overlay { position: absolute; top: 36px; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); display: flex; align-items: center; justify-content: center; z-index: 50; opacity: 0; pointer-events: none; transition: 0.15s; border-radius: 0 0 16px 16px; }
+      .ta-modal-overlay { position: absolute; inset: 0; box-sizing: border-box; padding: 0; background: rgba(13,17,23,.98); display: flex; align-items: stretch; justify-content: stretch; z-index: 10050; opacity: 0; pointer-events: none; transition: opacity .15s ease; border-radius: 16px; overflow: hidden; }
       .ta-modal-overlay.is-visible { opacity: 1; pointer-events: auto; }
-      .ta-modal { background: #161B22; border: 1px solid #2A313B; border-radius: 14px; padding: 18px; width: 88%; max-width: 300px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); max-height: 85%; overflow-y: auto; }
-      .ta-modal::-webkit-scrollbar { width: 6px; }
-      .ta-modal::-webkit-scrollbar-track { background: transparent; }
-      .ta-modal::-webkit-scrollbar-thumb { background: #2A313B; border-radius: 10px; }
-      .ta-modal::-webkit-scrollbar-thumb:hover { background: #3a4452; }
-      .ta-modal-title { font-size: 12px; font-weight: 800; color: #E6EDF3; text-transform: uppercase; letter-spacing: 0.5px; }
-      .ta-modal-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-      .ta-modal-close { cursor: pointer; font-size: 16px; opacity: 0.55; transition: 0.2s; line-height: 1; color: #9BA4B5; }
-      .ta-modal-close:hover { opacity: 1; color: #EF4444; }
-      .ta-field-label { font-size: 10px; color: #9BA4B5; text-transform: uppercase; margin-bottom: 3px; font-weight: 600; letter-spacing: 0.3px; }
-      .ta-field-input { width: 100%; background: #0D1117; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 8px; padding: 8px 10px; outline: none; font-size: 12px; box-sizing: border-box; transition: 0.15s; }
-      .ta-field-input::placeholder { color: #6B7280; }
-      .ta-field-input:focus { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,0.12); }
+      .ta-modal { background: #0D1117; border: 0; border-radius: 16px; padding: 0; width: 100%; max-width: none; height: 100%; max-height: none; display: flex; flex-direction: column; gap: 0; box-shadow: none; overflow: hidden; }
+      .ta-modal::-webkit-scrollbar, .ta-newpreset-body::-webkit-scrollbar { width: 7px; }
+      .ta-modal::-webkit-scrollbar-track, .ta-newpreset-body::-webkit-scrollbar-track { background: transparent; }
+      .ta-modal::-webkit-scrollbar-thumb, .ta-newpreset-body::-webkit-scrollbar-thumb { background: #303846; border-radius: 10px; }
+      .ta-modal::-webkit-scrollbar-thumb:hover, .ta-newpreset-body::-webkit-scrollbar-thumb:hover { background: #465264; }
+      .ta-modal-title { font-size: 15px; font-weight: 800; color: #E6EDF3; letter-spacing: .1px; }
+      .ta-modal-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid #2A313B; flex-shrink: 0; }
+      .ta-modal-close { width: 30px; height: 30px; display:flex; align-items:center; justify-content:center; cursor: pointer; font-size: 19px; opacity: .65; transition: .15s; line-height: 1; color: #9BA4B5; border-radius: 7px; }
+      .ta-modal-close:hover { opacity: 1; color: #E6EDF3; background: #1E242C; }
+      .ta-field-label { font-size: 10px; color: #9BA4B5; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; letter-spacing: .55px; }
+      .ta-field-input { width: 100%; background: #161B22; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 8px; padding: 9px 10px; outline: none; font-size: 12px; box-sizing: border-box; transition: .15s; }
+      .ta-field-input::placeholder { color: #626D7C; }
+      .ta-field-input:focus { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,.10); }
       .ta-modal-actions { display: flex; gap: 8px; margin-top: 6px; }
-      .ta-cancel-link { background: transparent; color: #9BA4B5; border: none; font-size: 11px; cursor: pointer; margin-top: 5px; text-decoration: underline; text-align: center; width: 100%; display: block; transition: 0.15s; }
+      .ta-cancel-link { background: transparent; color: #9BA4B5; border: none; font-size: 11px; cursor: pointer; margin-top: 5px; text-decoration: underline; text-align: center; width: 100%; display: block; transition: .15s; }
       .ta-cancel-link:hover { color: #E6EDF3; }
+      .ta-newpreset-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:52px; padding:10px 13px; border-bottom:1px solid #2A313B; flex-shrink:0; background:#0D1117; }
+      .ta-newpreset-heading { display:flex; align-items:center; gap:9px; min-width:0; }
+      .ta-newpreset-title-icon { width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(245,158,11,.45); border-radius:7px; color:#F59E0B; font-size:15px; font-weight:800; flex-shrink:0; }
+      .ta-newpreset-title { font-size:13px; font-weight:800; color:#E6EDF3; letter-spacing:.1px; }
+      .ta-newpreset-subtitle { margin-top:2px; color:#6F7A8A; font-size:9px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .ta-newpreset-close { width:27px; height:27px; display:flex; align-items:center; justify-content:center; border:0; background:transparent; color:#7D8797; font-size:19px; line-height:1; cursor:pointer; border-radius:7px; padding:0; flex-shrink:0; }
+      .ta-newpreset-close:hover { color:#E6EDF3; background:#161B22; }
+      .ta-newpreset-body { padding:12px 13px; overflow:auto; min-height:0; background:#0D1117; }
+      .ta-newpreset-grid { display:grid; grid-template-columns:1fr; gap:8px; }
+      .ta-newpreset-main-field { min-width:0; }
+      .ta-newpreset-label { font-size:9px; font-weight:800; color:#8B95A5; text-transform:uppercase; letter-spacing:.55px; margin-bottom:5px; }
+      .ta-newpreset-section-label { margin-top:13px; }
+      .ta-newpreset-input { width:100%; box-sizing:border-box; height:34px; background:#161B22; color:#E6EDF3; border:1px solid #2A313B; border-radius:7px; padding:7px 9px; font-size:11px; outline:none; }
+      .ta-newpreset-input::placeholder { color:#626D7C; }
+      .ta-newpreset-input:focus { border-color:#F59E0B; box-shadow:0 0 0 2px rgba(245,158,11,.08); }
+      .ta-newpreset-modes { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+
+      .ta-newpreset-origin-legend {
+        margin-top: 6px;
+        color: #626D7C;
+        font-size: 8px;
+        line-height: 1.35;
+      }
+      .ta-newpreset-mode {
+        min-height: 45px;
+        padding: 8px 10px;
+      }
+      .ta-newpreset-mode-icon {
+        width: 27px;
+        height: 27px;
+      }
+      .ta-newpreset-mode strong {
+        font-size: 10px;
+        margin: 0;
+      }
+      .ta-newpreset-mode { display:flex; align-items:center; gap:8px; text-align:left; padding:9px; background:#11161D; color:#E6EDF3; border:1px solid #2A313B; border-radius:8px; cursor:pointer; transition:.15s; min-height:51px; box-sizing:border-box; }
+      .ta-newpreset-mode:hover { border-color:#465264; background:#151B23; }
+      .ta-newpreset-mode.is-active { border-color:#F59E0B; background:rgba(245,158,11,.06); box-shadow:inset 0 0 0 1px rgba(245,158,11,.10); }
+      .ta-newpreset-mode-icon { width:25px; height:25px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:6px; background:#1A2029; color:#E6EDF3; font-size:12px; }
+      .ta-newpreset-mode strong { display:block; font-size:10px; margin-bottom:2px; }
+      .ta-newpreset-mode small { display:block; color:#6F7A8A; font-size:8px; line-height:1.3; }
+      .ta-newpreset-status { min-height:13px; margin:6px 0 1px; color:#6F7A8A; font-size:9px; line-height:1.3; }
+      .ta-newpreset-status.success { color:#8FD694; }
+      .ta-newpreset-status.error { color:#FCA5A5; }
+      .ta-newpreset-section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:8px; margin-top:10px; }
+      .ta-newpreset-help { color:#626D7C; font-size:8px; line-height:1.3; }
+      .ta-newpreset-count { flex-shrink:0; color:#F59E0B; font-size:9px; font-weight:800; }
+      .ta-newpreset-fields { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+      .ta-newpreset-field { padding:7px; background:#11161D; border:1px solid #2A313B; border-radius:8px; transition:.15s; }
+      .ta-newpreset-field:hover { border-color:#354052; }
+      .ta-newpreset-field.is-disabled { opacity:.48; }
+      .ta-newpreset-field-top { display:flex; align-items:center; gap:5px; }
+      .ta-newpreset-order { width:15px; color:#5F6978; font-size:8px; text-align:center; flex-shrink:0; }
+      .ta-field-label-input { flex:1; min-width:0; }
+      .ta-newpreset-remove { width:27px; height:27px; flex-shrink:0; border:1px solid #3A2222; background:rgba(239,68,68,.05); color:#EF4444; border-radius:6px; cursor:pointer; font-size:11px; }
+      .ta-newpreset-remove:hover { background:rgba(239,68,68,.12); }
+      .ta-newpreset-field-bottom { display:flex; gap:5px; margin-top:5px; padding-left:20px; }
+      .ta-newpreset-select { width:94px; flex-shrink:0; height:29px; background:#161B22; color:#C9D1D9; border:1px solid #2A313B; border-radius:6px; padding:5px 7px; font-size:8px; outline:none; }
+      .ta-field-value-input { flex:1; min-width:0; height:29px; }
+      .ta-newpreset-empty { padding:14px; text-align:center; color:#626D7C; border:1px dashed #2A313B; border-radius:8px; font-size:9px; }
+      .ta-newpreset-add { width:100%; margin-top:7px; padding:7px; border:1px dashed #394454; background:transparent; color:#F59E0B; border-radius:7px; cursor:pointer; font-size:9px; font-weight:800; }
+      .ta-newpreset-add:hover { background:rgba(245,158,11,.04); border-color:#F59E0B; }
+      .ta-newpreset-footer { display:flex; gap:7px; padding:9px 13px; border-top:1px solid #2A313B; background:#0D1117; flex-shrink:0; }
+      .ta-newpreset-cancel, .ta-newpreset-save { height:34px; border-radius:7px; cursor:pointer; font-size:10px; font-weight:800; transition:.15s; }
+      .ta-newpreset-cancel { flex:0 0 92px; background:#161B22; color:#9BA4B5; border:1px solid #2A313B; }
+      .ta-newpreset-cancel:hover { background:#1E242C; color:#E6EDF3; border-color:#465264; }
+      .ta-newpreset-save { flex:1; background:transparent; color:#F59E0B; border:1px solid #F59E0B; text-transform:uppercase; letter-spacing:.6px; }
+      .ta-newpreset-save:hover { background:#F59E0B; color:#0D1117; }
+      @media (max-width: 360px) {
+        .ta-newpreset-grid, .ta-newpreset-modes { grid-template-columns:1fr; }
+        .ta-newpreset-body { padding:10px; }
+        .ta-newpreset-footer { padding:8px 10px; }
+        .ta-newpreset-subtitle { display:none; }
+      }
+
       .ta-confirm-icon { font-size: 30px; text-align: center; margin: 4px 0 2px; }
       .ta-confirm-message { font-size: 12px; color: #9BA4B5; line-height: 1.5; text-align: center; }
       .ta-confirm-cancel-btn { background: transparent; color: #9BA4B5; border: 1px solid #2A313B; border-radius: 8px; padding: 9px 16px; font-weight: 700; cursor: pointer; text-transform: uppercase; letter-spacing: 0.6px; font-size: 11px; transition: 0.15s; }
       .ta-confirm-cancel-btn:hover { border-color: #9BA4B5; color: #E6EDF3; }
       .ta-confirm-ok-danger { background: #EF4444 !important; color: #fff !important; border: 1px solid #EF4444 !important; }
       .ta-confirm-ok-danger:hover { background: #dc2626 !important; }
+
+      /* -----------------------------------------------------------------
+         V 1.7 - AJUSTE VISUAL E MODAIS DE AVISO
+         ----------------------------------------------------------------- */
+
+      /* Texto do Novo Preset: maior e mais legível, mantendo o widget compacto. */
+      .ta-newpreset-title { font-size:14px !important; }
+      .ta-newpreset-subtitle { font-size:10px !important; }
+      .ta-newpreset-label { font-size:10px !important; margin-bottom:6px !important; }
+      .ta-newpreset-input { height:36px !important; padding:8px 10px !important; font-size:12px !important; }
+      .ta-newpreset-origin-legend { font-size:9px !important; line-height:1.45 !important; color:#7D8797 !important; }
+      .ta-newpreset-mode { min-height:48px !important; padding:9px 10px !important; }
+      .ta-newpreset-mode-icon { width:28px !important; height:28px !important; font-size:13px !important; }
+      .ta-newpreset-mode strong { font-size:11px !important; margin:0 !important; }
+      .ta-newpreset-status { font-size:10px !important; }
+      .ta-newpreset-help { font-size:9px !important; line-height:1.4 !important; }
+      .ta-newpreset-count { font-size:10px !important; }
+      .ta-newpreset-field { padding:8px !important; }
+      .ta-newpreset-order { width:17px !important; font-size:9px !important; }
+      .ta-field-label-input { font-size:12px !important; }
+      .ta-newpreset-remove { width:29px !important; height:29px !important; font-size:12px !important; }
+      .ta-newpreset-field-bottom { gap:6px !important; margin-top:6px !important; padding-left:22px !important; }
+      .ta-newpreset-select { width:102px !important; height:31px !important; font-size:10px !important; padding:5px 7px !important; }
+      .ta-field-value-input { height:31px !important; font-size:11px !important; }
+      .ta-newpreset-empty { font-size:10px !important; }
+      .ta-newpreset-add { padding:8px !important; font-size:10px !important; }
+      .ta-newpreset-cancel, .ta-newpreset-save {
+        height:36px !important;
+        font-size:11px !important;
+      }
+
+      /* Todos os avisos/confirmações ficam centralizados dentro do TicketAI. */
+      #ta-confirm-overlay {
+        align-items:center !important;
+        justify-content:center !important;
+        padding:16px !important;
+        background:rgba(13,17,23,.72) !important;
+      }
+
+      #ta-confirm-overlay .ta-modal {
+        width:min(300px, calc(100% - 20px)) !important;
+        max-width:300px !important;
+        height:auto !important;
+        max-height:calc(100% - 32px) !important;
+        min-height:0 !important;
+        padding:18px !important;
+        border:1px solid #2A313B !important;
+        border-radius:12px !important;
+        background:#0D1117 !important;
+        box-shadow:0 18px 45px rgba(0,0,0,.45) !important;
+        box-sizing:border-box !important;
+        overflow:auto !important;
+      }
+
+      #ta-confirm-overlay .ta-modal-title {
+        font-size:15px !important;
+        line-height:1.3 !important;
+        margin-bottom:7px !important;
+      }
+
+      #ta-confirm-overlay .ta-confirm-icon {
+        font-size:24px !important;
+        margin:0 0 7px !important;
+      }
+
+      #ta-confirm-overlay .ta-confirm-message {
+        font-size:12px !important;
+        line-height:1.5 !important;
+        color:#A8B1BF !important;
+        margin:0 auto !important;
+        max-width:260px !important;
+      }
+
+      #ta-confirm-overlay .ta-modal-actions {
+        display:flex !important;
+        justify-content:center !important;
+        gap:8px !important;
+        margin-top:16px !important;
+      }
+
+      #ta-confirm-overlay #ta-confirm-ok,
+      #ta-confirm-overlay #ta-confirm-cancel {
+        min-height:34px !important;
+        font-size:11px !important;
+        border-radius:7px !important;
+      }
+
+      #ta-confirm-overlay #ta-confirm-ok,
+      #ta-confirm-overlay #ta-confirm-cancel {
+        flex:1 !important;
+      }
+
+
+      .ta-newpreset-modes {
+        grid-template-columns:1fr !important;
+      }
+      .ta-newpreset-mode {
+        width:100% !important;
+        min-height:44px !important;
+        padding:8px 10px !important;
+      }
+      .ta-newpreset-origin-legend {
+        margin-top:5px !important;
+        margin-bottom:10px !important;
+        font-size:9px !important;
+        line-height:1.35 !important;
+        white-space:nowrap !important;
+        overflow:hidden !important;
+        text-overflow:ellipsis !important;
+      }
+      .ta-newpreset-fields-head {
+        align-items:center !important;
+        gap:8px !important;
+        margin-bottom:5px !important;
+      }
+      .ta-newpreset-fields-head h3,
+      .ta-newpreset-fields-title {
+        font-size:11px !important;
+        margin:0 !important;
+      }
+      .ta-newpreset-help {
+        font-size:9px !important;
+        line-height:1.25 !important;
+        margin:0 !important;
+        white-space:nowrap !important;
+        overflow:hidden !important;
+        text-overflow:ellipsis !important;
+      }
+      .ta-newpreset-count {
+        font-size:9px !important;
+        line-height:1 !important;
+        white-space:nowrap !important;
+        flex-shrink:0 !important;
+      }
+
+
+      /* V 1.7 - campos mais limpos e tipografia legível */
+      .ta-newpreset-section-label,
+      .ta-newpreset-label {
+        font-size:10px !important;
+        letter-spacing:.06em !important;
+        font-weight:700 !important;
+        color:#B8C2D1 !important;
+      }
+
+      .ta-newpreset-help,
+      .ta-newpreset-origin-legend,
+      .ta-newpreset-subtitle {
+        font-size:10px !important;
+        line-height:1.45 !important;
+        color:#7F8B9D !important;
+      }
+
+      .ta-newpreset-field {
+        padding:9px 10px !important;
+        border-radius:9px !important;
+      }
+
+      .ta-newpreset-field-top {
+        gap:7px !important;
+      }
+
+      .ta-field-label-input {
+        height:34px !important;
+        font-size:12px !important;
+        font-weight:600 !important;
+        color:#E6EDF3 !important;
+      }
+
+      .ta-newpreset-field-bottom {
+        margin-top:7px !important;
+        padding-left:22px !important;
+      }
+
+      .ta-field-value-input {
+        width:100% !important;
+        height:34px !important;
+        font-size:12px !important;
+        color:#D8DEE9 !important;
+        padding:7px 10px !important;
+      }
+
+      .ta-field-value-input::placeholder {
+        color:#667085 !important;
+      }
+
+      .ta-newpreset-remove {
+        width:31px !important;
+        height:31px !important;
+        min-width:31px !important;
+        padding:0 !important;
+        border:1px solid #3A2529 !important;
+        border-radius:7px !important;
+        background:#17191E !important;
+        color:#E25555 !important;
+        display:flex !important;
+        align-items:center !important;
+        justify-content:center !important;
+        font-size:20px !important;
+        font-weight:400 !important;
+        line-height:1 !important;
+        transition:all .15s ease !important;
+      }
+
+      .ta-newpreset-remove:hover {
+        background:#28191C !important;
+        border-color:#8F343A !important;
+        color:#FF6B6B !important;
+      }
+
+      .ta-newpreset-remove span {
+        transform:translateY(-1px);
+      }
+
+      .ta-newpreset-count {
+        font-size:9px !important;
+        font-weight:700 !important;
+        letter-spacing:0 !important;
+      }
+
+      .ta-newpreset-footer button {
+        font-size:11px !important;
+        font-weight:700 !important;
+        letter-spacing:.01em !important;
+      }
+
+
+      /* V 1.7 - PROTÓTIPO 2: DESTAQUE ESTRUTURADO */
+      .ta-newpreset-section {
+        margin:0 0 14px;
+      }
+      .ta-newpreset-section-title {
+        display:flex;
+        align-items:center;
+        gap:7px;
+        margin-bottom:8px;
+        color:#E6EDF3;
+      }
+      .ta-newpreset-section-title > span {
+        width:19px;
+        height:19px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        border:1px solid #F59E0B;
+        border-radius:50%;
+        color:#F59E0B;
+        font-size:9px;
+        font-weight:800;
+        flex-shrink:0;
+      }
+      .ta-newpreset-section-title strong {
+        font-size:11px;
+        text-transform:uppercase;
+        letter-spacing:.5px;
+      }
+      .ta-newpreset-grid {
+        grid-template-columns:1fr 1fr !important;
+        gap:8px !important;
+      }
+      .ta-newpreset-label {
+        font-size:10px !important;
+        margin-bottom:5px !important;
+      }
+      .ta-newpreset-input {
+        height:36px !important;
+        font-size:12px !important;
+        padding:8px 10px !important;
+      }
+      .ta-newpreset-mode {
+        width:100% !important;
+        min-height:58px !important;
+        padding:10px !important;
+        border-radius:8px !important;
+      }
+      .ta-newpreset-mode-icon {
+        width:31px !important;
+        height:31px !important;
+        font-size:15px !important;
+      }
+      .ta-newpreset-mode strong {
+        font-size:11px !important;
+      }
+      .ta-newpreset-mode small {
+        display:block !important;
+        margin-top:3px !important;
+        font-size:9px !important;
+        line-height:1.35 !important;
+        color:#7D8797 !important;
+      }
+      .ta-newpreset-origin-legend {
+        margin-top:6px !important;
+        font-size:9px !important;
+        line-height:1.4 !important;
+      }
+      .ta-newpreset-section-head {
+        align-items:center !important;
+        margin-top:0 !important;
+      }
+      .ta-newpreset-section-head .ta-newpreset-section-title {
+        margin-bottom:0 !important;
+      }
+      .ta-newpreset-help {
+        margin-top:0 !important;
+        font-size:9px !important;
+        line-height:1.35 !important;
+      }
+      .ta-newpreset-count {
+        font-size:9px !important;
+        white-space:nowrap !important;
+      }
+      .ta-newpreset-fields {
+        gap:6px !important;
+        margin-top:7px !important;
+      }
+      .ta-newpreset-field {
+        padding:8px 9px !important;
+        border-radius:8px !important;
+      }
+      .ta-newpreset-field-top {
+        min-height:31px !important;
+        gap:7px !important;
+      }
+      .ta-newpreset-order {
+        width:18px !important;
+        font-size:9px !important;
+      }
+      .ta-field-label-text {
+        flex:1;
+        min-width:0;
+        color:#E6EDF3;
+        font-size:12px;
+        font-weight:700;
+        line-height:1.25;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .ta-newpreset-field-bottom {
+        margin-top:6px !important;
+        padding-left:25px !important;
+      }
+      .ta-field-value-input {
+        width:100% !important;
+        height:34px !important;
+        font-size:12px !important;
+      }
+      .ta-newpreset-remove {
+        width:31px !important;
+        height:31px !important;
+        border-radius:7px !important;
+        background:rgba(239,68,68,.04) !important;
+        border:1px solid #3A2529 !important;
+        color:#EF4444 !important;
+        font-size:19px !important;
+      }
+      .ta-newpreset-remove:hover {
+        background:rgba(239,68,68,.12) !important;
+        border-color:#7F3438 !important;
+      }
+      .ta-newpreset-add {
+        margin-top:8px !important;
+        height:34px !important;
+        padding:0 10px !important;
+        font-size:10px !important;
+      }
+      .ta-newpreset-status {
+        font-size:10px !important;
+        min-height:14px !important;
+      }
+      .ta-newpreset-footer {
+        padding:10px 13px !important;
+      }
+      .ta-newpreset-cancel,
+      .ta-newpreset-save {
+        height:36px !important;
+        font-size:11px !important;
+      }
+      @media (max-width:360px) {
+        .ta-newpreset-grid { grid-template-columns:1fr !important; }
+      }
+
     `;
     document.head.appendChild(style);
   }
@@ -532,11 +1339,9 @@
               <div class="ta-help-title">Atalhos de teclado</div>
               <div class="ta-help-row"><span class="ta-help-key">Alt + Q</span><span>Abrir / minimizar / maximizar</span></div>
               <div class="ta-help-row"><span class="ta-help-key">Alt + W</span><span>Modo compacto</span></div>
-              <div class="ta-help-row"><span class="ta-help-key">Ctrl + N</span><span>Novo preset</span></div>
               <div class="ta-help-row"><span class="ta-help-key">Esc</span><span>Fechar menus e modais</span></div>
             </div>
           </div>
-          <div class="ta-h-btn" id="ta-btn-peek" title="Modo compacto (mostra 1 preset por vez, role o mouse para trocar) — Alt+W">▤</div>
           <div class="ta-h-btn" id="ta-btn-min" title="Minimizar">–</div>
           <div class="ta-h-btn" id="ta-btn-close" title="Fechar">✕</div>
         </div>
@@ -561,7 +1366,10 @@
       </div>
       <div class="ta-footer">
         <div class="ta-footer-row">
-          <button id="ta-btn-add" class="ta-btn-add" title="Novo preset (Ctrl+N)" type="button"><span>+</span>Novo Preset</button>
+          <div style="display:flex; gap:6px; flex:1;">
+            <button id="ta-btn-add" class="ta-btn-add" title="Novo preset" type="button"><span>+</span>Novo Preset</button>
+            
+          </div>
           <div class="ta-gear-wrap">
             <button id="ta-btn-gear" class="ta-btn-gear" title="Opções" type="button">⚙</button>
             <div class="ta-popover" id="ta-popover">
@@ -757,7 +1565,13 @@
   }
 
   function setupHeaderButtons(widget) {
-    document.getElementById('ta-btn-peek').onclick = (e) => { e.stopPropagation(); togglePeek(widget); };
+    const peekBtn = document.getElementById('ta-btn-peek');
+    if (peekBtn) {
+      peekBtn.onclick = (e) => {
+        e.stopPropagation();
+        togglePeek(widget);
+      };
+    }
     document.getElementById('ta-btn-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(widget); };
     document.getElementById('ta-btn-close').onclick = () => widget.style.display = 'none';
 
@@ -865,16 +1679,10 @@
   }
 
   function openModal(preset = null) {
-    editingId = preset ? preset.id : null;
-    document.getElementById('ta-modal-title').textContent = preset ? 'Editar preset' : 'Novo preset';
-    document.getElementById('ta-field-name').value = preset ? preset.name : '';
-    document.getElementById('ta-field-group').value = preset ? preset.group : '';
-    document.getElementById('ta-field-descricao').value = preset ? preset.descricao : '';
-    document.getElementById('ta-field-produto').value = preset ? preset.produto : '';
-    document.getElementById('ta-field-categoria').value = preset ? preset.categoria : '';
-    document.getElementById('ta-field-assunto').value = preset ? preset.assunto : '';
-    document.getElementById('ta-modal-overlay').classList.add('is-visible');
-    document.getElementById('ta-field-name').focus();
+    const fields = Array.isArray(preset?.fields)
+      ? preset.fields
+      : betaLegacyFields(preset);
+    openUnifiedPresetModal(preset, fields);
   }
 
   function closeModal() {
@@ -920,33 +1728,16 @@
   }
 
   function setupModal() {
-    document.getElementById('ta-btn-add').onclick = () => openModal();
-    document.getElementById('ta-modal-cancel').onclick = () => closeModal();
-    document.getElementById('ta-modal-close').onclick = () => closeModal();
-
-    document.getElementById('ta-modal-save').onclick = async () => {
-      const name = document.getElementById('ta-field-name').value.trim();
-      if (!name) { await showAlertModal('Informe um nome para o preset.'); return; }
-
-      const data = {
-        name,
-        group: document.getElementById('ta-field-group').value.trim() || 'GERAL',
-        descricao: document.getElementById('ta-field-descricao').value.trim(),
-        produto: document.getElementById('ta-field-produto').value.trim(),
-        categoria: document.getElementById('ta-field-categoria').value.trim(),
-        assunto: document.getElementById('ta-field-assunto').value.trim()
+    // O formulário de Novo Preset é configurado dinamicamente pelo openModal().
+    // Aqui apenas ligamos o botão principal à abertura do formulário.
+    const addBtn = document.getElementById('ta-btn-add');
+    if (addBtn) {
+      addBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openModal();
       };
-
-      if (editingId) {
-        const p = presets.find(x => x.id === editingId);
-        if (p) Object.assign(p, data);
-      } else {
-        presets.push({ id: generateId(), ...data });
-      }
-
-      closeModal();
-      save();
-    };
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -1219,7 +2010,7 @@
             let id = (typeof item.id === 'number' && !isNaN(item.id)) ? item.id : idCounter++;
             while (existingIds.has(id)) id = idCounter++;
             existingIds.add(id);
-            return {
+            const normalizedItem = {
               id,
               name: item.name,
               group: item.group || 'GERAL',
@@ -1228,6 +2019,14 @@
               categoria: item.categoria || '',
               assunto: item.assunto || ''
             };
+
+            if (Array.isArray(item.fields)) {
+              normalizedItem.fields = item.fields
+                .map(normalizeBetaField)
+                .filter(field => field.label);
+            }
+
+            return normalizedItem;
           });
 
           presets = [...presets, ...normalized];
@@ -1290,18 +2089,6 @@
         return;
       }
 
-      // Ctrl+N: abre o formulário de novo preset. Obs: o navegador pode
-      // reservar esse atalho para "nova janela" e não deixar a extensão
-      // capturá-lo; se isso acontecer, avise para trocarmos por outra tecla.
-      if (e.ctrlKey && key === 'n') {
-        e.preventDefault();
-        const widget = ensureWidgetVisible();
-        if (widget) {
-          widget.classList.remove('is-minimized', 'is-peek');
-          peekMode = false;
-        }
-        openModal();
-      }
     });
   }
 
