@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.7 BETA';
+  const TICKETAI_VERSION = '1.7';
 
   // Log leve de tempo de cada etapa do preenchimento, só aparece no console
   // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
@@ -818,10 +818,11 @@
       .ta-popover-accent-amber { border-left: 3px solid #F59E0B; padding-left: 10px; }
       .ta-popover-accent-danger { border-left: 3px solid #EF4444; padding-left: 10px; }
       .ta-text-danger { color: #EF4444; }
-      .ta-selection-toolbar { display: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 10px; color: #F59E0B; flex-shrink: 0; }
+      .ta-selection-toolbar { display: none; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 6px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 10px; color: #F59E0B; flex-shrink: 0; overflow: hidden; }
       .ta-selection-toolbar.is-visible { display: flex; }
-      .ta-selection-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-      .ta-selection-actions button { font-size: 9px; padding: 5px 8px; background: transparent; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 7px; cursor: pointer; text-transform: uppercase; font-weight: bold; transition: 0.15s; }
+      .ta-selection-toolbar #ta-selection-count { flex: 0 0 auto; white-space: nowrap; }
+      .ta-selection-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; flex: 0 0 auto; }
+      .ta-selection-actions button { font-size: 9px; padding: 5px 8px; white-space: nowrap; background: transparent; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 7px; cursor: pointer; text-transform: uppercase; font-weight: bold; transition: 0.15s; }
       .ta-selection-actions button:hover { border-color: #9BA4B5; }
       .ta-selection-actions .ta-danger-inline { color: #EF4444; border-color: rgba(239,68,68,0.35); }
       .ta-selection-actions .ta-danger-inline:hover { border-color: #EF4444; background: rgba(239,68,68,0.1); }
