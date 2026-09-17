@@ -4,7 +4,7 @@
 
 Classificação automática de tickets no Hubspot, a partir de presets
 
-Manifest V3 · Edge / Chrome · v1.7
+Manifest V3 · Edge / Chrome · v1.9
 
 Desenvolvido por Lagamba Tech
 
@@ -89,6 +89,10 @@ Fecha menus, diálogos e elementos auxiliares abertos
 📎 Modo compacto — mostra um preset por vez, navegação por scroll do mouse e atalho Alt+W.
 
 🟢 Feedback visual — barra de progresso discreta no card durante o preenchimento, com destaque de conclusão.
+
+🗂️ Organização de grupos — reordene os grupos na tela inicial usando os controles de subir/descer ou arraste e solte.
+
+🖱️ Arraste com indicação visual — o grupo em movimento recebe destaque e uma sombra acompanha o ponteiro até o destino.
 
 📁 Estrutura de arquivos
 
@@ -290,6 +294,40 @@ Corrigido
 🐛 Ajustes de estabilidade no cabeçalho após a remoção do botão visual de modo compacto.
 
 A v1.7 foi testada localmente após a implementação do novo fluxo de presets e, até o momento, não foram identificados bugs durante os testes realizados.
+
+v1.8 — Confirmação do preenchimento
+
+Adicionado
+
+✅ Confirmação do valor exibido no Hubspot após cada campo ser preenchido, com resultado individual por propriedade.
+
+✅ Feedback de aplicação no card: permanece aberto durante o preenchimento, fecha automaticamente quando tudo é confirmado e permanece aberto quando há falha.
+
+✅ Resumo de confirmações no modo compacto, com detalhes disponíveis ao expandir o widget.
+
+Corrigido
+
+🐛 Removida a limpeza automática de campos omitidos pelo preset, que podia interferir em propriedades dinâmicas da conta. O preset volta a alterar somente os campos configurados; o campo Proprietário do ticket permanece sob controle manual.
+
+🐛 Campos de seleção múltipla são identificados pela presença de checkboxes, inclusive propriedades cujo nome não contém “Categoria”.
+
+🧪 A v1.8 foi validada com 7 testes funcionais automatizados após a remoção da limpeza automática.
+
+v1.9 — Grupos reutilizáveis
+
+Adicionado
+
+📂 O campo Grupo sugere os grupos já utilizados nos presets e permite criar um novo grupo digitando seu nome.
+
+🧭 A comparação ignora diferenças de maiúsculas, minúsculas e espaços nas bordas, reutilizando o nome já cadastrado para evitar grupos duplicados.
+
+📦 Na importação de backups, presets com o mesmo nome e grupo são identificados antes de salvar. O usuário pode substituir os existentes ou mantê-los e importar somente os novos.
+
+↕️ Na tela inicial, o modo "Organizar grupos" permite mover um grupo para cima ou para baixo com os botões de chevron, ou posicioná-lo diretamente sobre outro grupo com arraste e solte. A ordem fica salva no navegador e é preservada ao reabrir o widget.
+
+🎨 O grupo de origem e o grupo de destino recebem destaque durante o arraste para deixar claro onde a troca será feita; os cards de presets ficam protegidos contra cliques acidentais enquanto a organização está ativa.
+
+🧹 Ao concluir uma aplicação com sucesso, o feedback de confirmação é encerrado mesmo que a lista seja reconstruída durante o processo (por exemplo, ao abrir a organização de grupos). Em caso de erro, o painel continua disponível para conferência.
 
 ⚠️ Pontos de atenção
 

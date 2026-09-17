@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.9';
+  const TICKETAI_VERSION = '1.7';
 
   // Log leve de tempo de cada etapa do preenchimento, só aparece no console
   // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
@@ -21,14 +21,6 @@
   let selectedIds = new Set();
   let peekMode = false;
   let peekIndex = 0;
-  let groupOrder = [];
-  let organizingGroups = false;
-  let draggedGroup = null;
-  let dragTargetGroup = null;
-  let draggedLabel = null;
-  let dragTargetLabel = null;
-  let draggedGhost = null;
-  let dragPointerListenerInstalled = false;
   let pendingUndo = null; // { items: [{ preset, index }], timer }
 
   // ---------------------------------------------------------------------
@@ -205,20 +197,6 @@
         return;
       }
 
-      // Campos de seleção múltipla podem ter um input checkbox antes das
-      // opções. Eles precisam ser classificados como multi para que a limpeza
-      // desmarque os itens, mesmo quando o rótulo não contém "Categoria".
-      const checkboxes = control.querySelectorAll('input[type="checkbox"]');
-      if (checkboxes.length) {
-        const selected = [...new Set(
-          Array.from(control.querySelectorAll('[data-option-text="true"]'))
-            .map(el => (el.textContent || '').trim()).filter(Boolean)
-        )];
-        results.push({ index: results.length + 1, label,
-          value: selected.length > 1 ? selected : (selected[0] || ''), type: 'multi' });
-        return;
-      }
-
       const input = control.querySelector('input');
       if (input) {
         results.push({ index: results.length + 1, label, value: input.value || '', type: 'input' });
@@ -346,7 +324,7 @@
 
     if (btn.getAttribute('data-dropdown-open') !== 'true') {
       simulateClick(btn);
-      await sleep(40);
+      await sleep(80);
     }
 
     // Só uma opção explicitamente vazia pode limpar um dropdown simples.
@@ -368,7 +346,7 @@
 
     if (btn.getAttribute('data-dropdown-open') !== 'true') {
       simulateClick(btn);
-      await sleep(40);
+      await sleep(80);
     }
 
     const searchInput = await waitFor(
@@ -410,108 +388,7 @@
   // preenchimento já espera o campo seguinte existir antes de agir nele
   // (waitForFieldButton/waitForFieldTextInput), então a espera acontece só
   // quando e pelo tempo que for realmente necessário.
-  // Confere o controle novamente: o React pode substituir o nó após o clique.
-  function fieldValueMatches(field) {
-    const type = field.type || 'dropdown';
-    if (type === 'input' || type === 'textarea') {
-      const input = findFieldTextInput(field.label);
-      const expected = Array.isArray(field.value) ? field.value.join(', ') : String(field.value ?? '');
-      return !!input && input.value === expected;
-    }
-    const button = findFieldButton(field.label);
-    if (!button) return false;
-    const selected = Array.from(button.querySelectorAll('[data-option-text="true"]'))
-      .map(el => (el.textContent || '').trim()).filter(Boolean);
-    const expected = (Array.isArray(field.value) ? field.value : [field.value ?? ''])
-      .map(value => String(value).trim()).filter(Boolean);
-    // Ausência do marcador de seleção é inconclusiva, inclusive ao limpar.
-    if (!button.querySelectorAll('[data-option-text="true"]').length) return false;
-    if (type === 'multi') {
-      const actual = [...new Set(selected)].sort();
-      const wanted = [...new Set(expected)].sort();
-      return actual.length === wanted.length && actual.every((value, i) => value === wanted[i]);
-    }
-    return expected.length <= 1 && selected.length === expected.length && selected.every((value, i) => value === expected[i]);
-  }
-
-  async function confirmFieldValue(field) {
-    let matchingSince = null;
-    // Exige uma pequena janela estável para detectar rejeições assíncronas.
-    return !!await waitFor(() => {
-      if (!fieldValueMatches(field)) { matchingSince = null; return false; }
-      if (matchingSince === null) matchingSince = Date.now();
-      return Date.now() - matchingSince >= 60;
-    }, 1500, 60);
-  }
-
-  let lastApplicationFeedback = null;
-  function getCurrentCard(card) {
-    if (!card?.dataset?.id) return card;
-    const widget = document.getElementById('ticketai-widget');
-    return Array.from(widget?.querySelectorAll('.ta-preset-card') || [])
-      .find(current => current.dataset.id === card.dataset.id) || card;
-  }
-
-  function showFieldResults(card, fields, results, activeLabel = '') {
-    if (card?.dataset?.id) {
-      lastApplicationFeedback = {id: card.dataset.id, fields: fields.map(({label}) => ({label})),
-        results: {...results}, activeLabel};
-      // Busca e modo compacto recriam os cards durante uma aplicação.
-      card = getCurrentCard(card);
-    }
-    const output = card?.querySelector('.ta-field-results');
-    if (!output) return;
-    output.hidden = false;
-    output.textContent = fields.map(field => {
-      const status = field.label === activeLabel ? 'Aplicando…'
-        : results[field.label] === true ? 'Confirmado'
-        : results[field.label] === false ? 'Não confirmado — confira no HubSpot' : 'Aguardando';
-      return `${field.label}: ${status}`;
-    }).join('\n');
-    const summary = card.querySelector('.ta-field-summary');
-    if (summary) {
-      summary.hidden = false;
-      const confirmed = fields.filter(field => results[field.label] === true).length;
-      summary.textContent = activeLabel ? 'Aplicando…' : `${confirmed}/${fields.length} confirmados · Alt+W: detalhes`;
-    }
-  }
-
-  let applyingPreset = false;
-  function closePreviousFeedback() {
-    const widget = document.getElementById('ticketai-widget');
-    for (const previous of Array.from(widget?.querySelectorAll('.ta-preset-card') || [])) {
-      const output = previous.querySelector('.ta-field-results');
-      const summary = previous.querySelector('.ta-field-summary');
-      if (output) output.hidden = true;
-      if (summary) summary.hidden = true;
-      previous.classList?.remove('ta-filled-warning', 'ta-filled');
-      previous.title = '';
-    }
-  }
-
   async function applyPresetToCard(preset, card) {
-    if (applyingPreset) return null;
-    closePreviousFeedback();
-    applyingPreset = true;
-    card?.setAttribute('aria-busy', 'true');
-    try {
-      const result = await applyPresetWithConfirmation(preset, card);
-      const failed = result && Object.values(result).some(value => value === false);
-      if (!failed && card?.dataset?.id) {
-        const current = getCurrentCard(card);
-        const output = current?.querySelector('.ta-field-results');
-        const summary = current?.querySelector('.ta-field-summary');
-        if (output) output.hidden = true;
-        if (summary) summary.hidden = true;
-      }
-      return result;
-    } finally {
-      applyingPreset = false;
-      card?.setAttribute('aria-busy', 'false');
-    }
-  }
-
-  async function applyPresetWithConfirmation(preset, card) {
     const t0 = performance.now();
     const progressBar = card ? card.querySelector('.ta-progress-bar') : null;
 
@@ -531,7 +408,6 @@
       const results = Object.create(null);
 
       for (const field of fields) {
-        showFieldResults(card, fields, results, field.label);
         let value = field.value ?? '';
         let ok = true;
 
@@ -542,99 +418,109 @@
         const type = field.type || 'dropdown';
         if (Array.isArray(value) && value.length === 0 && type !== 'multi') value = '';
 
-        try {
-          if (type === 'textarea' || type === 'input') {
-            const input = await waitForFieldTextInput(field.label);
-            if (input) {
-              fillTextInput(
-                input,
-                Array.isArray(value) ? value.join(', ') : String(value)
-              );
-            } else {
-              ok = false;
-            }
-          } else if (type === 'search') {
-            if (Array.isArray(value)) {
-              for (const item of value) {
-                if (item) ok = await fillSearchField(field.label, item) && ok;
-              }
-            } else {
-              ok = await fillSearchField(field.label, String(value));
-            }
-          } else if (type === 'multi') {
-            ok = await fillDynamicMultiField(field.label, value);
+        if (type === 'textarea' || type === 'input') {
+          const input = await waitForFieldTextInput(field.label);
+          if (input) {
+            fillTextInput(
+              input,
+              Array.isArray(value) ? value.join(', ') : String(value)
+            );
           } else {
-            if (Array.isArray(value)) {
-              for (const item of value) {
-                if (item) ok = await fillDropdownField(field.label, item) && ok;
-              }
-            } else {
-              ok = await fillDropdownField(field.label, String(value));
-            }
+            ok = false;
           }
-
-          results[field.label] = ok && await confirmFieldValue(field);
-        } catch {
-          // Mantém o retorno por campo mesmo se um controle desaparecer durante a ação.
-          results[field.label] = false;
+        } else if (type === 'search') {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (item) ok = await fillSearchField(field.label, item) && ok;
+            }
+          } else {
+            ok = await fillSearchField(field.label, String(value));
+          }
+        } else if (type === 'multi') {
+          ok = await fillDynamicMultiField(field.label, value);
+        } else {
+          if (Array.isArray(value)) {
+            for (const item of value) {
+              if (item) ok = await fillDropdownField(field.label, item) && ok;
+            }
+          } else {
+            ok = await fillDropdownField(field.label, String(value));
+          }
         }
-        showFieldResults(card, fields, results);
+
+        results[field.label] = ok;
         bump();
       }
 
       simulateClick(document.body);
-      // Fecha um dropdown que o usuário possa ter aberto durante a aplicação.
-      setTimeout(() => simulateClick(document.body), 80);
-
-      // Uma propriedade posterior pode invalidar uma seleção anterior.
-      for (const field of fields) {
-        if (results[field.label]) results[field.label] = fieldValueMatches(field);
-      }
-      showFieldResults(card, fields, results);
-      card = getCurrentCard(card);
 
       const falhouAlgo = Object.values(results).some(v => v === false);
       debugLog(`preset "${preset.name}" concluído${falhouAlgo ? ' (com falha parcial)' : ''}`, t0);
 
-      // O feedback só precisa sobreviver a reconstruções enquanto a aplicação
-      // está em andamento ou terminou com erro. Depois de uma conclusão bem
-      // sucedida, não o mantenha em `lastApplicationFeedback`, pois uma ação
-      // estrutural (por exemplo, abrir a organização de grupos) recria os
-      // cards e poderia restaurar indevidamente o painel já encerrado.
-      if (!falhouAlgo) lastApplicationFeedback = null;
-
       if (card) {
         card.title = falhouAlgo
-          ? 'Não foi possível confirmar: ' + Object.keys(results).filter(label => results[label] === false).join(', ')
+          ? 'Não foi possível aplicar: ' + Object.keys(results).filter(label => results[label] === false).join(', ')
           : '';
         setProgress(progressBar, 100);
         card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
-        if (!falhouAlgo) {
-          const output = card.querySelector('.ta-field-results');
-          const summary = card.querySelector('.ta-field-summary');
-          if (output) output.hidden = true;
-          if (summary) summary.hidden = true;
-        }
         setTimeout(() => {
           card.classList.remove('ta-filled', 'ta-filled-warning');
           setProgress(progressBar, 0);
-          // O painel de confirmação fecha sozinho somente quando tudo foi aplicado.
-          // Em caso de erro, permanece aberto para orientar a conferência no HubSpot.
         }, 900);
       }
 
       return results;
     }
 
-    // Presets legados usam a mesma confirmação, preservando as chaves retornadas.
-    const confirmed = await applyPresetWithConfirmation({...preset, fields: betaLegacyFields(preset)}, card);
-    return {
-      descricao: confirmed['Descrição do ticket'] ?? true,
-      produto: confirmed.Produto ?? true,
-      categoria: confirmed.Categoria ?? true,
-      assunto: confirmed.Assunto ?? true
+    // Compatibilidade com presets antigos.
+    const fields = ['descricao', 'produto', 'categoria', 'assunto'].filter(f => preset[f]);
+    const totalSteps = Math.max(fields.length, 1);
+    let doneSteps = 0;
+    const bump = () => {
+      doneSteps++;
+      const target = Math.min(92, Math.round((doneSteps / totalSteps) * 92));
+      setProgress(progressBar, target);
     };
+
+    const results = { descricao: true, produto: true, categoria: true, assunto: true };
+
+    if (preset.descricao) {
+      const descInput = await waitForFieldTextInput('Descrição do ticket');
+      if (descInput) { fillTextInput(descInput, preset.descricao); bump(); }
+      else { results.descricao = false; bump(); }
+    }
+
+    if (preset.produto) {
+      results.produto = await fillDropdownField('Produto', preset.produto);
+      bump();
+    }
+
+    if (preset.categoria) {
+      results.categoria = await fillDropdownField('Categoria', preset.categoria, { multi: true });
+      bump();
+    }
+
+    if (preset.assunto) {
+      results.assunto = await fillSearchField('Assunto', preset.assunto);
+      bump();
+    }
+
+    simulateClick(document.body);
+
+    const falhouAlgo = ['descricao', 'produto', 'categoria', 'assunto'].some(f => preset[f] && results[f] === false);
+    debugLog(`preset "${preset.name}" concluído${falhouAlgo ? ' (com falha parcial)' : ''}`, t0);
+    if (card) {
+      setProgress(progressBar, 100);
+      card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
+      setTimeout(() => {
+        card.classList.remove('ta-filled', 'ta-filled-warning');
+        setProgress(progressBar, 0);
+      }, 900);
+    }
+
+    return results;
   }
+
   // Preenche um campo de múltipla seleção com uma ou várias opções.
   async function fillDynamicMultiField(labelText, values) {
     const list = Array.isArray(values) ? values.filter(Boolean) : [values].filter(Boolean);
@@ -644,7 +530,7 @@
 
     if (btn.getAttribute('data-dropdown-open') !== 'true') {
       simulateClick(btn);
-      await sleep(40);
+      await sleep(80);
     }
 
     const container = await waitFor(
@@ -659,12 +545,12 @@
     for (const value of list) {
       if (btn.getAttribute('data-dropdown-open') !== 'true') {
         simulateClick(btn);
-        await sleep(40);
+        await sleep(80);
       }
 
       const selected = await selectOptionByText(String(value), btn);
       ok = selected && ok;
-      await sleep(30);
+      await sleep(50);
     }
 
     return ok;
@@ -747,8 +633,7 @@
             </div>
             <div class="ta-newpreset-main-field">
               <div class="ta-newpreset-label">Grupo</div>
-              <div class="ta-group-picker"><input id="ta-unified-group" class="ta-newpreset-input" type="text" autocomplete="off" value="${String(preset?.group || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Escolha ou crie um grupo"><div id="ta-group-suggestions" class="ta-group-suggestions" hidden></div></div>
-              <small class="ta-newpreset-hint">Escolha um grupo existente ou digite um novo.</small>
+              <input id="ta-unified-group" class="ta-newpreset-input" type="text" value="${String(preset?.group || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Ex.: E-MAIL">
             </div>
           </div>
         </section>
@@ -780,21 +665,6 @@
     const countEl = modal.querySelector('#ta-unified-count');
     const statusEl = modal.querySelector('#ta-unified-status');
     const hubspotBtn = modal.querySelector('#ta-mode-hubspot');
-    const groupInput = modal.querySelector('#ta-unified-group');
-    const groupSuggestions = modal.querySelector('#ta-group-suggestions');
-
-    const renderGroupSuggestions = () => {
-      const query = groupInput.value.trim().toLowerCase();
-      const matches = getGroupNames().filter(group => !query || group.toLowerCase().includes(query));
-      groupSuggestions.innerHTML = matches.map(group => `<button type="button" class="ta-group-suggestion">${escapeHtml(group)}</button>`).join('');
-      groupSuggestions.hidden = matches.length === 0;
-      groupSuggestions.querySelectorAll('.ta-group-suggestion').forEach(button => {
-        button.onclick = () => { groupInput.value = button.textContent; groupSuggestions.hidden = true; };
-      });
-    };
-    groupInput.onfocus = renderGroupSuggestions;
-    groupInput.oninput = renderGroupSuggestions;
-    groupInput.onblur = () => setTimeout(() => { groupSuggestions.hidden = true; }, 120);
 
     const setStatus = (text='', kind='') => { statusEl.textContent=text; statusEl.className='ta-newpreset-status'+(kind?' '+kind:''); };
     const syncModes = () => { if (hubspotBtn) hubspotBtn.classList.toggle('is-active', mode === 'hubspot'); };
@@ -847,15 +717,12 @@
     modal.querySelector('#ta-unified-cancel').onclick=closeModal;
     modal.querySelector('#ta-unified-save').onclick=async()=>{
       const name=modal.querySelector('#ta-unified-name').value.trim();
-      const typedGroup=modal.querySelector('#ta-unified-group').value.trim();
-      const existingGroup=getGroupNames().find(group => group.toLowerCase() === typedGroup.toLowerCase());
-      const group=existingGroup || typedGroup || 'GERAL';
+      const group=modal.querySelector('#ta-unified-group').value.trim()||'GERAL';
       if(!name){await showAlertModal('Informe um nome para o preset.');return;}
       const clean=fields.map(normalizeBetaField).filter(f=>f.enabled);
       if(clean.some(f=>!f.label)){await showAlertModal('Informe o nome de cada campo selecionado.');return;}
       if(!clean.length){await showAlertModal('Adicione ou selecione pelo menos um campo para salvar o preset.');return;}
       const data={name,group,fields:clean};
-      lastApplicationFeedback = null;
       if(isEditing){const existing=presets.find(x=>x.id===preset.id);if(existing)Object.assign(existing,data);}else{presets.push({id:generateId(),...data});}
       closeModal();save();
     };
@@ -914,23 +781,6 @@
       .ta-body::-webkit-scrollbar-thumb { background: #2A313B; border-radius: 10px; }
       .ta-body::-webkit-scrollbar-thumb:hover { background: #3a4452; }
       .ta-search-row { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
-      .ta-organize-groups { width:34px; flex:0 0 34px; border:1px solid #2A313B; border-radius:7px; background:#161B22; color:#8B949E; cursor:pointer; }
-      .ta-organize-groups:hover, .ta-organize-groups.is-active { border-color:#F59E0B; color:#F59E0B; }
-      .ta-group-label.ta-group-organizing { cursor:grab; border:1px dashed #596579; padding:5px 7px; border-radius:6px; }
-      .ta-group-label.ta-group-organizing, .ta-group-label.ta-group-organizing * { user-select:none; }
-      #ticketai-widget.ta-organizing-groups .ta-preset-card { pointer-events:none; user-select:none; }
-      .ta-group-label.ta-group-organizing.is-dragging { cursor:grabbing; border-color:#F59E0B; background:rgba(245,158,11,.18); box-shadow:0 0 0 2px rgba(245,158,11,.22); color:#F59E0B; opacity:1; animation:ta-group-drag-pulse .9s ease-in-out infinite; }
-      .ta-group-drag-ghost { position:fixed; z-index:2147483647; pointer-events:none; box-sizing:border-box; padding:7px 9px; border:1px solid #F59E0B; border-radius:6px; background:#242A33; color:#F59E0B; font-size:10px; font-weight:700; box-shadow:0 14px 24px rgba(0,0,0,.55), 0 0 0 2px rgba(245,158,11,.35); opacity:.9; transform:rotate(1deg) scale(1.02); }
-      @keyframes ta-group-drag-pulse { 0%,100% { transform:translateY(0) scale(1); box-shadow:0 2px 0 rgba(245,158,11,.18), 0 0 0 2px rgba(245,158,11,.28); } 50% { transform:translateY(-3px) scale(1.012); box-shadow:0 10px 0 -3px rgba(245,158,11,.16), 0 14px 20px rgba(0,0,0,.42), 0 0 0 2px rgba(245,158,11,.55); } }
-      @media (prefers-reduced-motion: reduce) { .ta-group-label.ta-group-organizing.is-dragging { animation:none; } }
-      .ta-group-label.ta-group-organizing.is-drag-over { border-color:#F59E0B; background:rgba(245,158,11,.1); }
-      .ta-group-order-controls { float:right; display:flex; gap:4px; margin-top:-2px; }
-      .ta-group-order-controls button { width:24px; height:22px; display:inline-flex; align-items:center; justify-content:center; padding:0; border:1px solid #3A4452; border-radius:6px; background:rgba(22,27,34,.72); color:#9BA4B5; cursor:pointer; font-size:0; line-height:1; transition:background .15s ease,border-color .15s ease,color .15s ease,transform .1s ease; }
-      .ta-group-order-controls button::before { font-size:13px; font-weight:800; line-height:1; }
-      .ta-group-order-controls button:first-child::before { content:'⌃'; transform:translateY(1px); }
-      .ta-group-order-controls button:last-child::before { content:'⌄'; transform:translateY(-1px); }
-      .ta-group-order-controls button:hover { border-color:#F59E0B; background:rgba(245,158,11,.12); color:#F59E0B; }
-      .ta-group-order-controls button:active { transform:scale(.94); }
       .ta-search-input { flex: 1; min-width: 0; background: #0D1117; border: 1px solid #2A313B; color: #E6EDF3; border-radius: 8px; padding: 8px 12px; font-size: 12px; outline: none; box-sizing: border-box; transition: 0.15s; }
       .ta-search-input::placeholder { color: #6B7280; }
       .ta-search-input:focus { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,0.12); }
@@ -943,11 +793,6 @@
       .ta-preset-card:hover { background: #1E242C; }
       .ta-preset-card.ta-filled { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
       .ta-preset-card.ta-filled-warning { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
-      .ta-field-results { white-space: pre-line; font-size: 11px; line-height: 1.5; color: #E6EDF3; margin-top: 8px; overflow-wrap: anywhere; }
-      .ta-field-results[hidden] { display: none; }
-      .ta-field-summary { display: none; font-size: 10px; margin-top: 5px; color: #E6EDF3; }
-      #ticketai-widget.is-peek .ta-field-results { display: none; }
-      #ticketai-widget.is-peek .ta-field-summary:not([hidden]) { display: block; }
       .ta-progress-bar { position: absolute; top: 0; left: 0; height: 2px; width: 0%; background: #F59E0B; border-radius: 2px 2px 0 0; transition: width 0.28s ease; }
       .ta-card-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .ta-preset-name { font-size: 13px; font-weight: 500; color: #E6EDF3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; line-height: 1.3; }
@@ -1020,8 +865,6 @@
       .ta-modal::-webkit-scrollbar-track, .ta-newpreset-body::-webkit-scrollbar-track { background: transparent; }
       .ta-modal::-webkit-scrollbar-thumb, .ta-newpreset-body::-webkit-scrollbar-thumb { background: #303846; border-radius: 10px; }
       .ta-modal::-webkit-scrollbar-thumb:hover, .ta-newpreset-body::-webkit-scrollbar-thumb:hover { background: #465264; }
-      .ta-modal, .ta-newpreset-body { scrollbar-width:thin; scrollbar-color:#303846 transparent; }
-      .ta-modal::-webkit-scrollbar-button, .ta-newpreset-body::-webkit-scrollbar-button { display:none; width:0; height:0; }
       .ta-modal-title { font-size: 15px; font-weight: 800; color: #E6EDF3; letter-spacing: .1px; }
       .ta-modal-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid #2A313B; flex-shrink: 0; }
       .ta-modal-close { width: 30px; height: 30px; display:flex; align-items:center; justify-content:center; cursor: pointer; font-size: 19px; opacity: .65; transition: .15s; line-height: 1; color: #9BA4B5; border-radius: 7px; }
@@ -1048,18 +891,6 @@
       .ta-newpreset-input { width:100%; box-sizing:border-box; height:34px; background:#161B22; color:#E6EDF3; border:1px solid #2A313B; border-radius:7px; padding:7px 9px; font-size:11px; outline:none; }
       .ta-newpreset-input::placeholder { color:#626D7C; }
       .ta-newpreset-input:focus { border-color:#F59E0B; box-shadow:0 0 0 2px rgba(245,158,11,.08); }
-      .ta-newpreset-hint { display:block; margin-top:4px; color:#8B949E; font-size:10px; }
-      .ta-group-picker { position:relative; }
-      .ta-group-suggestions { position:absolute; z-index:20; top:calc(100% + 4px); left:0; right:0; max-height:170px; overflow-y:auto; padding:5px; background:#1C2128; border:1px solid #3A4452; border-radius:8px; box-shadow:0 10px 24px rgba(0,0,0,.45); }
-      .ta-group-suggestions { scrollbar-width:thin; scrollbar-color:#3A4452 transparent; }
-      .ta-group-suggestions::-webkit-scrollbar { width:6px; }
-      .ta-group-suggestions::-webkit-scrollbar-track { background:transparent; }
-      .ta-group-suggestions::-webkit-scrollbar-thumb { background:#3A4452; border-radius:10px; }
-      .ta-group-suggestions::-webkit-scrollbar-thumb:hover { background:#596579; }
-      .ta-group-suggestions::-webkit-scrollbar-button { display:none; width:0; height:0; }
-      .ta-group-suggestions[hidden] { display:none; }
-      .ta-group-suggestion { display:block; width:100%; padding:8px 9px; border:0; border-radius:5px; background:transparent; color:#E6EDF3; text-align:left; font:inherit; font-size:11px; cursor:pointer; }
-      .ta-group-suggestion:hover { background:#2A313B; color:#F59E0B; }
       .ta-newpreset-modes { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
 
       .ta-newpreset-origin-legend {
@@ -1555,7 +1386,6 @@
         </div>
         <div class="ta-search-row" id="ta-search-row">
           <input type="text" id="ta-search-input" class="ta-search-input" placeholder="Buscar preset...">
-          <button id="ta-btn-organize-groups" class="ta-organize-groups" type="button" title="Organizar grupos">☷</button>
         </div>
         <div id="ta-list"></div>
       </div>
@@ -1844,7 +1674,7 @@
   // ---------------------------------------------------------------------
 
   function save() {
-    chrome.storage.local.set({ ticketaiPresets: presets, ticketaiGroupOrder: groupOrder }, render);
+    chrome.storage.local.set({ ticketaiPresets: presets }, render);
   }
 
   function deletePresetsWithUndo(ids) {
@@ -1999,22 +1829,6 @@
     return presets.filter(p => p.name.toLowerCase().includes(q) || (p.group || '').toLowerCase().includes(q));
   }
 
-  function getGroupNames() {
-    const groups = [];
-    const seen = new Set();
-    presets.forEach(preset => {
-      const group = String(preset.group || 'GERAL').trim() || 'GERAL';
-      const key = group.toLowerCase();
-      if (!seen.has(key)) { seen.add(key); groups.push(group); }
-    });
-    return groups.sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }
-
-  function getOrderedGroupNames() {
-    const all = getGroupNames();
-    return [...groupOrder.filter(name => all.includes(name)), ...all.filter(name => !groupOrder.includes(name))];
-  }
-
   function groupPresets(list) {
     const groups = Object.create(null);
     list.forEach(p => {
@@ -2044,24 +1858,8 @@
       </div>
     `;
     card.querySelector('.ta-preset-name').innerHTML = highlightMatch(p.name, searchQuery);
-    const fieldResults = document.createElement('div');
-    fieldResults.className = 'ta-field-results';
-    fieldResults.hidden = true;
-    fieldResults.setAttribute('role', 'status');
-    fieldResults.setAttribute('aria-live', 'polite');
-    card.appendChild(fieldResults);
-    const fieldSummary = document.createElement('div');
-    fieldSummary.className = 'ta-field-summary';
-    fieldSummary.hidden = true;
-    fieldSummary.setAttribute('role', 'status');
-    card.appendChild(fieldSummary);
-    if (lastApplicationFeedback?.id === String(p.id)) {
-      const {fields, results, activeLabel} = lastApplicationFeedback;
-      showFieldResults(card, fields, results, activeLabel);
-    }
 
     card.onclick = async (e) => {
-      if (organizingGroups) return;
       if (selectMode) { e.stopPropagation(); toggleSelect(p.id); return; }
       if (e.target.closest('.ta-preset-actions')) return;
       await applyPresetToCard(p, card);
@@ -2103,101 +1901,13 @@
     }
 
     const groups = groupPresets(filtered);
-    const names = Object.keys(groups).sort((a, b) => {
-      const ai = groupOrder.indexOf(a), bi = groupOrder.indexOf(b);
-      if (ai < 0 && bi < 0) return a.localeCompare(b, 'pt-BR');
-      if (ai < 0) return 1; if (bi < 0) return -1; return ai - bi;
-    });
-    names.forEach(groupName => {
+    Object.keys(groups).sort().forEach(groupName => {
       const label = document.createElement('div');
       label.className = 'ta-group-label';
       label.textContent = `${groupName} · ${groups[groupName].length}`;
-      label.dataset.group = groupName;
-      // O arraste nativo pode sequestrar o ponteiro no widget; usamos os
-      // eventos de ponteiro abaixo para manter a origem e o destino corretos.
-      label.draggable = false;
-      label.classList.toggle('ta-group-organizing', organizingGroups);
-      if (organizingGroups) {
-        label.title = 'Arraste para reposicionar';
-        const controls = document.createElement('span');
-        controls.className = 'ta-group-order-controls';
-        controls.innerHTML = '<button type="button" title="Mover grupo para cima">↑</button><button type="button" title="Mover grupo para baixo">↓</button>';
-        controls.querySelector('button').onclick = event => { event.stopPropagation(); moveGroup(groupName, -1); };
-        controls.querySelectorAll('button')[1].onclick = event => { event.stopPropagation(); moveGroup(groupName, 1); };
-        label.appendChild(controls);
-        label.ondragstart = event => { draggedGroup = groupName; draggedLabel = label; event.dataTransfer?.setData('text/plain', groupName); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; label.classList.add('is-dragging'); };
-        label.ondragend = () => { draggedGroup = null; draggedLabel?.classList.remove('is-dragging'); draggedLabel = null; draggedGhost?.remove(); draggedGhost = null; };
-        label.ondragover = event => event.preventDefault();
-        label.ondragenter = event => { event.preventDefault(); label.classList.add('is-drag-over'); };
-        label.ondragleave = () => label.classList.remove('is-drag-over');
-        label.ondrop = event => {
-          event.preventDefault();
-          label.classList.remove('is-drag-over');
-          if (!draggedGroup || draggedGroup === groupName) return;
-          reorderGroupBefore(draggedGroup, groupName);
-        };
-        label.onpointerdown = event => {
-          if (event.target.closest('button')) return;
-          event.preventDefault();
-          draggedGroup = groupName;
-          draggedLabel = label;
-          label.classList.add('is-dragging');
-          draggedGhost = label.cloneNode(true);
-          draggedGhost.className = 'ta-group-drag-ghost';
-          draggedGhost.querySelectorAll('button').forEach(button => button.remove());
-          const rect = label.getBoundingClientRect();
-          Object.assign(draggedGhost.style, { left:`${rect.left}px`, top:`${rect.top}px`, width:`${rect.width}px` });
-          document.body.appendChild(draggedGhost);
-        };
-        label.onpointermove = event => {
-          if (!draggedGroup) return;
-          if (draggedGhost) { draggedGhost.style.left = `${event.clientX - 20}px`; draggedGhost.style.top = `${event.clientY - 14}px`; }
-          const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest?.('.ta-group-organizing');
-          dragTargetGroup = target?.dataset?.group || null;
-          if (dragTargetLabel !== target) {
-            dragTargetLabel?.classList.remove('is-drag-over');
-            dragTargetLabel = target;
-            dragTargetLabel?.classList.add('is-drag-over');
-          }
-        };
-        label.onpointerup = event => {
-          const source = draggedGroup;
-          const target = dragTargetGroup || groupName;
-          if (!source || source === target) { draggedGroup = null; dragTargetGroup = null; draggedLabel?.classList.remove('is-dragging'); dragTargetLabel?.classList.remove('is-drag-over'); draggedLabel = null; dragTargetLabel = null; draggedGhost?.remove(); draggedGhost = null; return; }
-          event.preventDefault();
-          draggedGroup = null;
-          dragTargetGroup = null;
-          draggedLabel?.classList.remove('is-dragging');
-          dragTargetLabel?.classList.remove('is-drag-over');
-          draggedLabel = null;
-          dragTargetLabel = null;
-          draggedGhost?.remove();
-          draggedGhost = null;
-          reorderGroupBefore(source, target);
-        };
-      }
       list.appendChild(label);
       groups[groupName].forEach(p => list.appendChild(buildCard(p)));
     });
-  }
-
-  function moveGroup(groupName, direction) {
-    const names = getOrderedGroupNames();
-    const index = names.indexOf(groupName);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= names.length) return;
-    [names[index], names[target]] = [names[target], names[index]];
-    groupOrder = names;
-    save();
-  }
-
-  function reorderGroupBefore(source, target) {
-    const names = getOrderedGroupNames().filter(name => name !== source);
-    const index = names.indexOf(target);
-    if (index < 0) return;
-    names.splice(index, 0, source);
-    groupOrder = names;
-    save();
   }
 
   function renderEmptyState(list) {
@@ -2223,30 +1933,6 @@
     const selectionToolbar = document.getElementById('ta-selection-toolbar');
     if (selectionToolbar) selectionToolbar.classList.toggle('is-visible', selectMode);
     updateSelectionUI();
-    const organizeButton = document.getElementById('ta-btn-organize-groups');
-    document.getElementById('ticketai-widget')?.classList.toggle('ta-organizing-groups', organizingGroups);
-    if (!dragPointerListenerInstalled) {
-      document.addEventListener('pointerup', event => {
-        if (!draggedGroup) return;
-        const source = draggedGroup;
-        const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest?.('.ta-group-organizing')?.dataset?.group || null;
-        draggedGroup = null;
-        draggedLabel?.classList.remove('is-dragging');
-        dragTargetLabel?.classList.remove('is-drag-over');
-        draggedLabel = null;
-        dragTargetLabel = null;
-        draggedGhost?.remove();
-        draggedGhost = null;
-        if (target && source !== target) reorderGroupBefore(source, target);
-      });
-      dragPointerListenerInstalled = true;
-    }
-    if (organizeButton) {
-      organizeButton.textContent = organizingGroups ? '✓' : '☷';
-      organizeButton.title = organizingGroups ? 'Concluir organização' : 'Organizar grupos';
-      organizeButton.classList.toggle('is-active', organizingGroups);
-      organizeButton.onclick = () => { organizingGroups = !organizingGroups; render(); };
-    }
     renderList();
   }
 
@@ -2368,31 +2054,7 @@
             return normalizedItem;
           });
 
-          const identity = item => `${String(item.group || 'GERAL').trim().toLowerCase()}\u0000${String(item.name || '').trim().toLowerCase()}`;
-          const existingKeys = new Set(presets.map(identity));
-          const seenKeys = new Set();
-          const duplicateKeys = new Set();
-          normalized.forEach(item => {
-            const key = identity(item);
-            if (existingKeys.has(key) || seenKeys.has(key)) duplicateKeys.add(key);
-            seenKeys.add(key);
-          });
-          const duplicates = normalized.filter(item => duplicateKeys.has(identity(item)));
-          let toImport = normalized;
-          if (duplicates.length) {
-            const replace = await showConfirmModal(
-              `${duplicates.length} preset${duplicates.length === 1 ? '' : 's'} já existe${duplicates.length === 1 ? '' : 'm'} com o mesmo nome e grupo. Deseja substituir?`,
-              { title: 'Presets duplicados', okText: 'Substituir', cancelText: 'Manter atuais' }
-            );
-            if (replace) {
-              const duplicateSet = new Set(duplicates.map(identity));
-              presets = presets.filter(item => !duplicateSet.has(identity(item)));
-            } else {
-              const duplicateSet = new Set(duplicates.map(identity));
-              toImport = normalized.filter(item => !duplicateSet.has(identity(item)));
-            }
-          }
-          presets = [...presets, ...toImport];
+          presets = [...presets, ...normalized];
           save();
           closePopover();
         } catch (err) {
@@ -2481,9 +2143,8 @@
     setupSelectionMode();
     setupSearch();
 
-    chrome.storage.local.get(['ticketaiPresets', 'ticketaiGroupOrder'], (res) => {
+    chrome.storage.local.get(['ticketaiPresets'], (res) => {
       presets = res.ticketaiPresets || [];
-      groupOrder = Array.isArray(res.ticketaiGroupOrder) ? res.ticketaiGroupOrder : [];
       render();
     });
   }
