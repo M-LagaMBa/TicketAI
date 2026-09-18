@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TicketAI",
   "description": "Classificação rápida de tickets no Hubspot via presets.",
-  "version": "1.9",
+  "version": "2.0",
   "permissions": ["storage", "scripting"],
   "host_permissions": [
     "*://*.hubspot.com/*"

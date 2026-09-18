@@ -4,7 +4,7 @@
 
 Classificação automática de tickets no Hubspot, a partir de presets
 
-Manifest V3 · Edge / Chrome · v1.9
+Manifest V3 · Edge / Chrome · v2.0
 
 Desenvolvido por Lagamba Tech
 
@@ -20,7 +20,7 @@ Antes:  abrir Produto → escolher → abrir Categoria → escolher → abrir As
 Agora:  clicar no preset
 
 Para criar um preset:
-Ler classificação atual → revisar campos → editar valores → salvar
+Ler dados atuais → revisar campos → editar valores → salvar
 
 🚀 Como usar
 
@@ -30,11 +30,11 @@ Clique no ícone do TicketAI para abrir o widget.
 
 Clique no preset correspondente ao caso.
 
-A extensão preenche os campos configurados no preset, respeitando a ordem e as dependências do Hubspot.
+A extensão compara a Pipeline e o Status configurados no preset com os valores atuais. Quando houver diferença, ajusta e confirma cada etapa; em seguida, preenche os campos de classificação respeitando a ordem e as dependências do HubSpot. O salvamento final do ticket continua manual.
 
 Para criar um preset, clique em + Novo Preset.
 
-No formulário, clique em Ler classificação atual para importar os campos e valores atualmente preenchidos no Hubspot.
+No formulário, clique em Ler dados atuais para importar Pipeline, Status e os valores visíveis no modal do HubSpot.
 
 Revise a classificação: selecione/desmarque campos, edite os valores ou remova campos que não devem fazer parte do preset.
 
@@ -56,7 +56,7 @@ Abre/fecha o modo compacto
 
 Esc
 
-Fecha menus, diálogos e elementos auxiliares abertos
+Durante a aplicação de um preset, cancela as próximas etapas (alterações já feitas são mantidas). Fora disso, fecha menus, diálogos e elementos auxiliares abertos.
 
 🖱️ Funcionalidades
 
@@ -328,6 +328,30 @@ Adicionado
 🎨 O grupo de origem e o grupo de destino recebem destaque durante o arraste para deixar claro onde a troca será feita; os cards de presets ficam protegidos contra cliques acidentais enquanto a organização está ativa.
 
 🧹 Ao concluir uma aplicação com sucesso, o feedback de confirmação é encerrado mesmo que a lista seja reconstruída durante o processo (por exemplo, ao abrir a organização de grupos). Em caso de erro, o painel continua disponível para conferência.
+
+v2.0 — Encerramento e leitura unificada
+
+Adicionado
+
+🔁 Workflow opcional por preset — cada preset pode guardar a Pipeline e o Status do ticket, além dos campos de classificação. Ao aplicar, o TicketAI ajusta primeiro o workflow e só então preenche a classificação. Presets antigos continuam compatíveis.
+
+📥 Leitura única — o botão “Ler dados atuais” importa Pipeline, Status e classificação de uma vez. Se o modal “Propriedades dependentes” não estiver aberto, a leitura preserva Pipeline e Status e informa o passo restante.
+
+🎯 Prioridade do Status correto — com o modal “Propriedades dependentes” aberto, o Status salvo no preset vem do próprio modal (por exemplo, “Fechado”), que é o valor que habilitou a classificação.
+
+🪟 Compatibilidade com “Exibir” — a extensão localiza Pipeline e Status exclusivamente no cartão “Destaques de Ticket”, evitando confundir esses campos com os filtros da lista.
+
+⎋ Cancelamento por Esc — durante a aplicação de um preset, Esc interrompe silenciosamente as próximas etapas. Alterações já realizadas não são revertidas e o card não mantém sinalização de progresso.
+
+🔴 Erro destacado — se qualquer etapa não for confirmada, o card preserva a mensagem do campo com falha e recebe contorno vermelho até uma nova aplicação.
+
+Corrigido
+
+🐛 A alteração de Pipeline/Status agora aguarda a confirmação do modal do HubSpot antes de seguir para a classificação, sem exigir o salvamento manual naquele instante.
+
+🐛 A leitura e a aplicação no modo “Exibir” deixaram de interagir com filtros de Pipeline e Status da lista de tickets.
+
+🐛 A importação de backups v2 agora preserva o workflow de cada preset, incluindo Pipeline e Status. Ao importar um arquivo com presets duplicados, a opção “Substituir” atualiza os existentes com esses valores.
 
 ⚠️ Pontos de atenção
 

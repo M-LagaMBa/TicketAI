@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '1.9';
+  const TICKETAI_VERSION = '2.0';
 
   // Log leve de tempo de cada etapa do preenchimento, só aparece no console
   // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
@@ -71,6 +71,7 @@
     return new Promise((resolve) => {
       const start = Date.now();
       const tick = () => {
+        if (isPresetApplicationCancelled()) return resolve(null);
         const result = condicao();
         if (result) return resolve(result);
         if (Date.now() - start >= timeoutMs) return resolve(null);
@@ -170,6 +171,169 @@
   }
   function waitForFieldTextInput(labelText, timeoutMs = 2000) {
     return waitFor(() => findFieldTextInput(labelText), timeoutMs, 60);
+  }
+
+  // Pipeline e status ficam no card "Destaques de Ticket", fora do modal de
+  // propriedades dependentes. No modo "Exibir", a lista também possui filtros
+  // com esses mesmos rótulos; por isso a busca é limitada ao card do ticket.
+  function findTicketHighlightsScope(labelText) {
+    const target = String(labelText || '').trim().toLowerCase();
+    const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
+      .filter(el => el.getClientRects().length > 0 &&
+        (el.textContent || '').trim().toLowerCase() === 'destaques de ticket');
+
+    for (const heading of headings) {
+      let container = heading.parentElement;
+      for (let depth = 0; depth < 7 && container; depth++, container = container.parentElement) {
+        const hasLabel = Array.from(container.querySelectorAll('div, span, label'))
+          .some(el => el.getClientRects().length > 0 &&
+            (el.textContent || '').trim().toLowerCase() === target);
+        if (hasLabel) return container;
+      }
+    }
+    return null;
+  }
+
+  function findTicketPropertyButton(labelText) {
+    const target = String(labelText || '').trim().toLowerCase();
+    const scope = findTicketHighlightsScope(labelText);
+    if (!scope) return null;
+    const labels = Array.from(scope.querySelectorAll('div, span, label'))
+      .filter(el => el.getClientRects().length > 0 &&
+        (el.textContent || '').trim().toLowerCase() === target);
+    for (const label of labels) {
+      let container = label.parentElement;
+      for (let depth = 0; depth < 4 && container; depth++, container = container.parentElement) {
+        const buttons = Array.from(container.querySelectorAll('button'))
+          .filter(button => button.getClientRects().length > 0);
+        const button = buttons.find(item => {
+          const text = (item.textContent || '').trim().toLowerCase();
+          return text.startsWith(target) || (item.getAttribute('aria-label') || '').toLowerCase().startsWith(target);
+        }) || (buttons.length === 1 ? buttons[0] : null);
+        if (button) return button;
+      }
+    }
+    return null;
+  }
+
+  function ticketPropertyValue(labelText) {
+    const button = findTicketPropertyButton(labelText);
+    if (!button) return '';
+    const marked = Array.from(button.querySelectorAll('[data-option-text="true"]'))
+      .map(el => (el.textContent || '').trim()).filter(Boolean);
+    if (marked.length) return marked.join(', ');
+    const label = String(labelText || '').trim();
+    return (button.textContent || '').trim().replace(new RegExp(`^${label}\\s*`, 'i'), '').trim();
+  }
+
+  function modalDropdownValue(labelText) {
+    const button = findFieldButton(labelText);
+    if (!button) return '';
+    const marked = Array.from(button.querySelectorAll('[data-option-text="true"]'))
+      .map(el => (el.textContent || '').trim()).filter(Boolean);
+    return marked.join(', ') || (button.textContent || '').trim();
+  }
+
+  function normalizeWorkflow(workflow) {
+    const clean = value => String(value ?? '').trim();
+    const pipeline = clean(workflow?.pipeline);
+    const status = clean(workflow?.status);
+    return { pipeline, status };
+  }
+
+  function normalizeImportedPreset(item, id) {
+    const normalizedItem = {
+      id,
+      name: item.name,
+      group: item.group || 'GERAL',
+      descricao: item.descricao || '',
+      produto: item.produto || '',
+      categoria: item.categoria || '',
+      assunto: item.assunto || ''
+    };
+    if (Array.isArray(item.fields)) {
+      normalizedItem.fields = item.fields
+        .map(normalizeBetaField)
+        .filter(field => field.label);
+    }
+    const workflow = normalizeWorkflow(item.workflow);
+    if (workflow.pipeline || workflow.status) normalizedItem.workflow = workflow;
+    return normalizedItem;
+  }
+
+  function valuesMatch(actual, expected) {
+    return String(actual || '').trim().toLocaleLowerCase() === String(expected || '').trim().toLocaleLowerCase();
+  }
+
+  function readCurrentWorkflow() {
+    return {
+      pipeline: ticketPropertyValue('Pipeline'),
+      // O modal mostra o Status que efetivamente habilitou a classificação.
+      // O card lateral só é usado quando o modal ainda não está aberto.
+      status: modalDropdownValue('Status do ticket') || ticketPropertyValue('Status do ticket')
+    };
+  }
+
+  function describeTicketImport(workflow, fieldsCount) {
+    const hasWorkflow = !!(workflow?.pipeline || workflow?.status);
+    const hasClassification = fieldsCount > 0;
+    if (hasWorkflow && hasClassification) {
+      return {kind: 'success', text: `✓ Pipeline, Status e ${fieldsCount} campos importados. Revise antes de salvar.`};
+    }
+    if (hasWorkflow) {
+      return {kind: 'success', text: '✓ Pipeline e Status importados. Abra o modal “Propriedades dependentes” para importar a classificação.'};
+    }
+    if (hasClassification) {
+      return {kind: 'success', text: `✓ ${fieldsCount} campos importados. Abra um ticket com “Destaques de Ticket” para importar Pipeline e Status.`};
+    }
+    return {kind: 'error', text: 'Abra um ticket com “Destaques de Ticket” e o modal “Propriedades dependentes”.'};
+  }
+
+  function ticketPropertyIsConfirmed(labelText, valueText) {
+    if (valuesMatch(ticketPropertyValue(labelText), valueText)) return true;
+    // Ao selecionar o Status, o HubSpot abre o modal de propriedades e só
+    // atualiza o card lateral depois do Salvar manual. Nesse intervalo, o
+    // modal é a fonte de verdade; usar o card lateral interromperia a
+    // classificação embora o Status já esteja corretamente selecionado.
+    return labelText === 'Status do ticket' && fieldValueMatches({
+      label: labelText, value: valueText, type: 'dropdown'
+    });
+  }
+
+  async function setTicketProperty(labelText, valueText) {
+    if (isPresetApplicationCancelled()) return false;
+    const current = ticketPropertyValue(labelText);
+    if (valuesMatch(current, valueText)) return true;
+    const button = await waitFor(() => findTicketPropertyButton(labelText), 2500, 60);
+    if (!button || isPresetApplicationCancelled()) return false;
+    simulateClick(button);
+    await sleep(40);
+    if (!await selectOptionByText(valueText, button) || isPresetApplicationCancelled()) return false;
+    return !!await waitFor(() => ticketPropertyIsConfirmed(labelText, valueText), 3000, 80);
+  }
+
+  async function applyWorkflowBeforeClassification(preset, card) {
+    const workflow = normalizeWorkflow(preset?.workflow);
+    const results = Object.create(null);
+    const showFailure = () => {
+      const failed = Object.entries(results).find(([, ok]) => !ok);
+      if (!failed || !card) return;
+      const output = card.querySelector('.ta-field-results');
+      if (output) {
+        output.hidden = false;
+        output.textContent = `${failed[0]}: Não confirmado — confira no HubSpot`;
+      }
+    };
+    if (workflow.pipeline && !isPresetApplicationCancelled()) {
+      results.Pipeline = await setTicketProperty('Pipeline', workflow.pipeline);
+      if (!results.Pipeline) { showFailure(); return results; }
+    }
+    if (workflow.status && !isPresetApplicationCancelled()) {
+      // O HubSpot recria as opções de status depois de uma mudança de pipeline.
+      results['Status do ticket'] = await setTicketProperty('Status do ticket', workflow.status);
+    }
+    showFailure();
+    return results;
   }
 
 
@@ -477,6 +641,30 @@
   }
 
   let applyingPreset = false;
+  let activePresetApplication = null;
+
+  function isPresetApplicationCancelled() {
+    return !!activePresetApplication?.cancelled;
+  }
+
+  function cancelActivePresetApplication() {
+    if (!applyingPreset || !activePresetApplication) return false;
+    activePresetApplication.cancelled = true;
+    return true;
+  }
+
+  function clearPresetCancellationFeedback(card) {
+    card = getCurrentCard(card);
+    const output = card?.querySelector('.ta-field-results');
+    const summary = card?.querySelector('.ta-field-summary');
+    const progressBar = card?.querySelector('.ta-progress-bar');
+    if (output) output.hidden = true;
+    if (summary) summary.hidden = true;
+    setProgress(progressBar, 0);
+    card?.classList?.remove('ta-application-failed', 'ta-filled-warning', 'ta-filled');
+    if (card) card.title = '';
+  }
+
   function closePreviousFeedback() {
     const widget = document.getElementById('ticketai-widget');
     for (const previous of Array.from(widget?.querySelectorAll('.ta-preset-card') || [])) {
@@ -484,7 +672,7 @@
       const summary = previous.querySelector('.ta-field-summary');
       if (output) output.hidden = true;
       if (summary) summary.hidden = true;
-      previous.classList?.remove('ta-filled-warning', 'ta-filled');
+      previous.classList?.remove('ta-application-failed', 'ta-filled-warning', 'ta-filled');
       previous.title = '';
     }
   }
@@ -493,10 +681,26 @@
     if (applyingPreset) return null;
     closePreviousFeedback();
     applyingPreset = true;
+    activePresetApplication = {cancelled: false};
     card?.setAttribute('aria-busy', 'true');
     try {
-      const result = await applyPresetWithConfirmation(preset, card);
+      const workflowResult = await applyWorkflowBeforeClassification(preset, card);
+      if (isPresetApplicationCancelled()) {
+        clearPresetCancellationFeedback(card);
+        return null;
+      }
+      const workflowFailed = Object.values(workflowResult).some(value => value === false);
+      const classificationResult = workflowFailed ? {} : await applyPresetWithConfirmation(preset, card);
+      if (isPresetApplicationCancelled()) {
+        clearPresetCancellationFeedback(card);
+        return null;
+      }
+      const result = {...workflowResult, ...classificationResult};
       const failed = result && Object.values(result).some(value => value === false);
+      if (failed) {
+        const current = getCurrentCard(card);
+        current?.classList?.add('ta-application-failed');
+      }
       if (!failed && card?.dataset?.id) {
         const current = getCurrentCard(card);
         const output = current?.querySelector('.ta-field-results');
@@ -507,6 +711,7 @@
       return result;
     } finally {
       applyingPreset = false;
+      activePresetApplication = null;
       card?.setAttribute('aria-busy', 'false');
     }
   }
@@ -531,6 +736,7 @@
       const results = Object.create(null);
 
       for (const field of fields) {
+        if (isPresetApplicationCancelled()) break;
         showFieldResults(card, fields, results, field.label);
         let value = field.value ?? '';
         let ok = true;
@@ -582,6 +788,8 @@
         bump();
       }
 
+      if (isPresetApplicationCancelled()) return results;
+
       simulateClick(document.body);
       // Fecha um dropdown que o usuário possa ter aberto durante a aplicação.
       setTimeout(() => simulateClick(document.body), 80);
@@ -608,19 +816,19 @@
           ? 'Não foi possível confirmar: ' + Object.keys(results).filter(label => results[label] === false).join(', ')
           : '';
         setProgress(progressBar, 100);
-        card.classList.add(falhouAlgo ? 'ta-filled-warning' : 'ta-filled');
+        card.classList.add(falhouAlgo ? 'ta-application-failed' : 'ta-filled');
         if (!falhouAlgo) {
           const output = card.querySelector('.ta-field-results');
           const summary = card.querySelector('.ta-field-summary');
           if (output) output.hidden = true;
           if (summary) summary.hidden = true;
         }
-        setTimeout(() => {
-          card.classList.remove('ta-filled', 'ta-filled-warning');
-          setProgress(progressBar, 0);
-          // O painel de confirmação fecha sozinho somente quando tudo foi aplicado.
-          // Em caso de erro, permanece aberto para orientar a conferência no HubSpot.
-        }, 900);
+        if (!falhouAlgo) {
+          setTimeout(() => {
+            card.classList.remove('ta-filled');
+            setProgress(progressBar, 0);
+          }, 900);
+        }
       }
 
       return results;
@@ -732,7 +940,7 @@
           <span class="ta-newpreset-title-icon">${isEditing ? '✎' : '+'}</span>
           <div>
             <div class="ta-newpreset-title">${isEditing ? 'Editar preset' : 'Novo preset'}</div>
-            <div class="ta-newpreset-subtitle">Crie manualmente ou importe a classificação atual.</div>
+            <div class="ta-newpreset-subtitle">Defina o encerramento e importe a classificação atual.</div>
           </div>
         </div>
         <button id="ta-unified-close" class="ta-newpreset-close" type="button" aria-label="Fechar">×</button>
@@ -754,14 +962,19 @@
         </section>
 
         <section class="ta-newpreset-section">
-          <div class="ta-newpreset-section-title"><span>2</span><strong>Origem do preset</strong></div>
-          <button id="ta-mode-hubspot" class="ta-newpreset-mode" type="button">
-            <span class="ta-newpreset-mode-icon">🔍</span>
-            <span><strong>Ler classificação atual</strong><small>Importe os campos e valores já preenchidos no HubSpot.</small></span>
+          <div class="ta-newpreset-section-title"><span>2</span><strong>Dados atuais do ticket</strong></div>
+          <div class="ta-newpreset-help">Importe Pipeline, Status e classificação de uma vez. O salvamento final no HubSpot continua manual.</div>
+          <button id="ta-read-ticket-data" class="ta-newpreset-mode" type="button">
+            <span class="ta-newpreset-mode-icon">↻</span>
+            <span><strong>Ler dados atuais</strong><small>Importe Pipeline, Status e a classificação visível no HubSpot.</small></span>
           </button>
-          <div class="ta-newpreset-origin-legend">Leia a classificação atual do HubSpot e ajuste os campos antes de salvar.</div>
-          <div id="ta-unified-status" class="ta-newpreset-status"></div>
+          <div class="ta-newpreset-fields" style="margin-top:7px">
+            <div class="ta-newpreset-field"><div class="ta-newpreset-field-top"><input id="ta-workflow-pipeline-enabled" type="checkbox"><strong>Pipeline</strong></div><div class="ta-newpreset-field-bottom"><input id="ta-workflow-pipeline" class="ta-newpreset-input" type="text" placeholder="Ex.: [Sinistros] Pipeline de Suporte"></div></div>
+            <div class="ta-newpreset-field"><div class="ta-newpreset-field-top"><input id="ta-workflow-status-enabled" type="checkbox"><strong>Status do ticket</strong></div><div class="ta-newpreset-field-bottom"><input id="ta-workflow-status" class="ta-newpreset-input" type="text" placeholder="Ex.: Fechado"></div></div>
+          </div>
         </section>
+
+        <div id="ta-unified-status" class="ta-newpreset-status"></div>
 
         <section class="ta-newpreset-section ta-newpreset-fields-section">
           <div class="ta-newpreset-section-head">
@@ -779,9 +992,18 @@
     const fieldsContainer = modal.querySelector('#ta-unified-fields');
     const countEl = modal.querySelector('#ta-unified-count');
     const statusEl = modal.querySelector('#ta-unified-status');
-    const hubspotBtn = modal.querySelector('#ta-mode-hubspot');
+    const readTicketDataBtn = modal.querySelector('#ta-read-ticket-data');
     const groupInput = modal.querySelector('#ta-unified-group');
     const groupSuggestions = modal.querySelector('#ta-group-suggestions');
+    const workflow = normalizeWorkflow(preset?.workflow);
+    const workflowPipeline = modal.querySelector('#ta-workflow-pipeline');
+    const workflowStatus = modal.querySelector('#ta-workflow-status');
+    const workflowPipelineEnabled = modal.querySelector('#ta-workflow-pipeline-enabled');
+    const workflowStatusEnabled = modal.querySelector('#ta-workflow-status-enabled');
+    workflowPipeline.value = workflow.pipeline;
+    workflowStatus.value = workflow.status;
+    workflowPipelineEnabled.checked = !!workflow.pipeline;
+    workflowStatusEnabled.checked = !!workflow.status;
 
     const renderGroupSuggestions = () => {
       const query = groupInput.value.trim().toLowerCase();
@@ -797,7 +1019,7 @@
     groupInput.onblur = () => setTimeout(() => { groupSuggestions.hidden = true; }, 120);
 
     const setStatus = (text='', kind='') => { statusEl.textContent=text; statusEl.className='ta-newpreset-status'+(kind?' '+kind:''); };
-    const syncModes = () => { if (hubspotBtn) hubspotBtn.classList.toggle('is-active', mode === 'hubspot'); };
+    const syncModes = () => { if (readTicketDataBtn) readTicketDataBtn.classList.toggle('is-active', mode === 'hubspot'); };
 
     function renderFields() {
       fieldsContainer.innerHTML='';
@@ -834,14 +1056,22 @@
       });
     }
 
-    const readHubspot=()=>{
-      const detected=readCurrentClassification();
-      if(!detected.length){setStatus('Abra primeiro o modal “Propriedades dependentes” no HubSpot.','error');return;}
-      fields=detected.map(f=>normalizeBetaField({...f,enabled:String(betaFieldDisplayValue(f)).trim()!==''&&!/proprietário do ticket/i.test(f.label)}));
-      mode='hubspot';syncModes();renderFields();setStatus(`✓ ${fields.length} campos encontrados. Revise antes de salvar.`,'success');
+    const readTicketData = () => {
+      const current = readCurrentWorkflow();
+      if (current.pipeline) { workflowPipeline.value = current.pipeline; workflowPipelineEnabled.checked = true; }
+      if (current.status) { workflowStatus.value = current.status; workflowStatusEnabled.checked = true; }
+      const detected = readCurrentClassification();
+      if (detected.length) {
+        fields = detected.map(f => normalizeBetaField({...f, enabled:String(betaFieldDisplayValue(f)).trim() !== '' && !/proprietário do ticket/i.test(f.label)}));
+        mode = 'hubspot';
+        renderFields();
+      }
+      const feedback = describeTicketImport(current, detected.length);
+      syncModes();
+      setStatus(feedback.text, feedback.kind);
     };
 
-    if (hubspotBtn) hubspotBtn.onclick=readHubspot;
+    if (readTicketDataBtn) readTicketDataBtn.onclick=readTicketData;
     modal.querySelector('#ta-unified-add').onclick=()=>{fields.push({label:'',value:'',type:'dropdown',enabled:true});renderFields();const labels=fieldsContainer.querySelectorAll('.ta-field-label-input');if(labels.length)labels[labels.length-1].focus();};
     modal.querySelector('#ta-unified-close').onclick=closeModal;
     modal.querySelector('#ta-unified-cancel').onclick=closeModal;
@@ -854,9 +1084,13 @@
       const clean=fields.map(normalizeBetaField).filter(f=>f.enabled);
       if(clean.some(f=>!f.label)){await showAlertModal('Informe o nome de cada campo selecionado.');return;}
       if(!clean.length){await showAlertModal('Adicione ou selecione pelo menos um campo para salvar o preset.');return;}
-      const data={name,group,fields:clean};
+      const savedWorkflow = {
+        pipeline: workflowPipelineEnabled.checked ? workflowPipeline.value.trim() : '',
+        status: workflowStatusEnabled.checked ? workflowStatus.value.trim() : ''
+      };
+      const data={name,group,fields:clean,...((savedWorkflow.pipeline || savedWorkflow.status) ? {workflow:savedWorkflow} : {})};
       lastApplicationFeedback = null;
-      if(isEditing){const existing=presets.find(x=>x.id===preset.id);if(existing)Object.assign(existing,data);}else{presets.push({id:generateId(),...data});}
+      if(isEditing){const existing=presets.find(x=>x.id===preset.id);if(existing){Object.assign(existing,data);if(!data.workflow)delete existing.workflow;}}else{presets.push({id:generateId(),...data});}
       closeModal();save();
     };
 
@@ -942,7 +1176,7 @@
       .ta-preset-card { position: relative; overflow: hidden; background: #161B22; border: 1px solid #2A313B; border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s; display: flex; flex-direction: column; gap: 0; }
       .ta-preset-card:hover { background: #1E242C; }
       .ta-preset-card.ta-filled { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
-      .ta-preset-card.ta-filled-warning { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
+      .ta-preset-card.ta-application-failed { border-color: #EF4444 !important; box-shadow: 0 0 0 2px rgba(239,68,68,0.28); }
       .ta-field-results { white-space: pre-line; font-size: 11px; line-height: 1.5; color: #E6EDF3; margin-top: 8px; overflow-wrap: anywhere; }
       .ta-field-results[hidden] { display: none; }
       .ta-field-summary { display: none; font-size: 10px; margin-top: 5px; color: #E6EDF3; }
@@ -2349,23 +2583,7 @@
             let id = (typeof item.id === 'number' && !isNaN(item.id)) ? item.id : idCounter++;
             while (existingIds.has(id)) id = idCounter++;
             existingIds.add(id);
-            const normalizedItem = {
-              id,
-              name: item.name,
-              group: item.group || 'GERAL',
-              descricao: item.descricao || '',
-              produto: item.produto || '',
-              categoria: item.categoria || '',
-              assunto: item.assunto || ''
-            };
-
-            if (Array.isArray(item.fields)) {
-              normalizedItem.fields = item.fields
-                .map(normalizeBetaField)
-                .filter(field => field.label);
-            }
-
-            return normalizedItem;
+            return normalizeImportedPreset(item, id);
           });
 
           const identity = item => `${String(item.group || 'GERAL').trim().toLowerCase()}\u0000${String(item.name || '').trim().toLowerCase()}`;
@@ -2434,6 +2652,13 @@
     document.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
 
+      // O cancelamento é cooperativo: preserva campos já alterados, mas faz
+      // as esperas e as próximas etapas do preset pararem imediatamente.
+      if (key === 'escape' && cancelActivePresetApplication()) {
+        e.preventDefault();
+        return;
+      }
+
       // Alt+Q: abre o widget se não existir, ou alterna minimizado/maximizado.
       if (e.altKey && key === 'q') {
         e.preventDefault();
@@ -2452,7 +2677,7 @@
         return;
       }
 
-    });
+    }, true);
   }
 
   // ---------------------------------------------------------------------
