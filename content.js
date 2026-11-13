@@ -2,7 +2,7 @@
   if (window.hasTicketAILoaded) return;
   window.hasTicketAILoaded = true;
 
-  const TICKETAI_VERSION = '2.0';
+  const TICKETAI_VERSION = '2.4';
 
   // Log leve de tempo de cada etapa do preenchimento, só aparece no console
   // (F12) se TA_DEBUG_TIMING estiver true. Ajuda a calibrar os timeouts com
@@ -38,7 +38,39 @@
   function escapeHtml(str) {
     const d = document.createElement('div');
     d.textContent = str == null ? '' : String(str);
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Ícones locais: nenhuma biblioteca remota ou permissão adicional.
+  function uiIcon(name) {
+    const paths = {
+      layers: '<path d="m12 3 10 6-10 6L2 9l10-6Z"/><path d="m2 15 10 6 10-6M2 12l10 6 10-6"/>',
+      search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+      up: '<path d="m5 12 7-7 7 7M12 19V5"/>',
+      down: '<path d="m5 12 7 7 7-7M12 5v14"/>',
+      grip: '<circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>',
+      download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+      upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
+      select: '<path d="m3 6 2 2 4-4m-6 9 2 2 4-4M13 6h8M13 13h8M3 20h18"/>',
+      resize: '<path d="M8 3H3v5M16 21h5v-5M3 3l7 7m4 4 7 7"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>',
+      close: '<path d="m6 6 12 12M6 18 18 6"/>',
+      minus: '<path d="M5 12h14"/>',
+      compact: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>',
+      help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 2M12 16h.01"/>',
+      more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+      edit: '<path d="m14 5 5 5M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15z"/>',
+      copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
+      trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/>',
+      arrow: '<path d="M6 18 18 6M6 6h12v12"/>',
+      left: '<path d="m15 5-7 7 7 7"/>',
+      right: '<path d="m9 5 7 7-7 7"/>',
+      groups: '<path d="M8 6h12M8 12h9M8 18h6M4 6h.01M4 12h.01M4 18h.01"/>',
+      check: '<path d="m5 12 4 4 10-10"/>',
+      settings: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>',
+      read: '<path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5M8 9h8M8 13h8M8 17h4"/>'
+    };
+    return `<svg class="ta-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.more}</svg>`;
   }
 
   // Escapa o texto e envolve o trecho buscado em <mark> para destaque visual.
@@ -222,8 +254,9 @@
     const marked = Array.from(button.querySelectorAll('[data-option-text="true"]'))
       .map(el => (el.textContent || '').trim()).filter(Boolean);
     if (marked.length) return marked.join(', ');
-    const label = String(labelText || '').trim();
-    return (button.textContent || '').trim().replace(new RegExp(`^${label}\\s*`, 'i'), '').trim();
+    // O rótulo acessível fica fora do botão; seu texto é somente o valor.
+    // Remover o prefixo "Pipeline" mutilaria nomes como "Pipeline de Suporte".
+    return (button.textContent || '').trim();
   }
 
   function modalDropdownValue(labelText) {
@@ -295,9 +328,8 @@
     // atualiza o card lateral depois do Salvar manual. Nesse intervalo, o
     // modal é a fonte de verdade; usar o card lateral interromperia a
     // classificação embora o Status já esteja corretamente selecionado.
-    return labelText === 'Status do ticket' && fieldValueMatches({
-      label: labelText, value: valueText, type: 'dropdown'
-    });
+    return labelText === 'Status do ticket' &&
+      valuesMatch(modalDropdownValue(labelText), valueText);
   }
 
   async function setTicketProperty(labelText, valueText) {
@@ -383,6 +415,15 @@
         return;
       }
 
+      const dropdown = control.querySelector('button[data-dropdown="true"]');
+      if (dropdown) {
+        const selected = selectedDropdownValues(dropdown) || [];
+        results.push({ index: results.length + 1, label,
+          value: selected.length > 1 ? selected : (selected[0] || ''),
+          type: selected.length > 1 ? 'multi' : 'dropdown' });
+        return;
+      }
+
       const input = control.querySelector('input');
       if (input) {
         results.push({ index: results.length + 1, label, value: input.value || '', type: 'input' });
@@ -399,7 +440,7 @@
         index: results.length + 1,
         label,
         value: selected.length > 1 ? selected : (selected[0] || ''),
-        type: /categoria/i.test(label) ? 'multi' : 'dropdown'
+        type: 'dropdown'
       });
     });
 
@@ -459,7 +500,16 @@
     const sel = `[title="${cssEscapeValue(text)}"], [data-option-value="${cssEscapeValue(text)}"]`;
     const el = await waitFor(() => {
       const scope = getOpenDropdownContainer(button);
-      return scope?.querySelector(sel) || null;
+      if (!scope) return null;
+      const visible = item => item.getClientRects().length > 0 &&
+        getComputedStyle(item).visibility !== 'hidden';
+      const attributed = scope.querySelector(sel);
+      if (attributed && visible(attributed)) return attributed;
+      // Os Status atuais usam UITag dentro de role=option, sem title/value.
+      // Só aceita uma correspondência exata dentro do portal deste botão.
+      const options = Array.from(scope.querySelectorAll('[role="option"]'))
+        .filter(item => visible(item) && valuesMatch(item.textContent, text));
+      return options.length === 1 ? options[0] : null;
     }, 3000);
     if (!el) return false;
     const target = el.querySelector('button') || el;
@@ -575,6 +625,13 @@
   // (waitForFieldButton/waitForFieldTextInput), então a espera acontece só
   // quando e pelo tempo que for realmente necessário.
   // Confere o controle novamente: o React pode substituir o nó após o clique.
+  function selectedDropdownValues(button) {
+    const marked = Array.from(button.querySelectorAll('[data-option-text="true"]'));
+    // UITag aparece no botão selecionado; nunca lê opções do portal aberto.
+    const nodes = marked.length ? marked : Array.from(button.querySelectorAll('[data-component-name="UITag"]'));
+    return nodes.length ? nodes.map(el => (el.textContent || '').trim()).filter(Boolean) : null;
+  }
+
   function fieldValueMatches(field) {
     const type = field.type || 'dropdown';
     if (type === 'input' || type === 'textarea') {
@@ -584,12 +641,11 @@
     }
     const button = findFieldButton(field.label);
     if (!button) return false;
-    const selected = Array.from(button.querySelectorAll('[data-option-text="true"]'))
-      .map(el => (el.textContent || '').trim()).filter(Boolean);
+    const selected = selectedDropdownValues(button);
     const expected = (Array.isArray(field.value) ? field.value : [field.value ?? ''])
       .map(value => String(value).trim()).filter(Boolean);
     // Ausência do marcador de seleção é inconclusiva, inclusive ao limpar.
-    if (!button.querySelectorAll('[data-option-text="true"]').length) return false;
+    if (!selected) return false;
     if (type === 'multi') {
       const actual = [...new Set(selected)].sort();
       const wanted = [...new Set(expected)].sort();
@@ -609,6 +665,67 @@
   }
 
   let lastApplicationFeedback = null;
+  let cardConfirmation = null;
+  let confirmationTimer = null;
+
+  function clearCardConfirmation() {
+    if (confirmationTimer !== null) clearTimeout(confirmationTimer);
+    confirmationTimer = null;
+    cardConfirmation = null;
+    refreshCardConfirmation();
+  }
+
+  function refreshCardConfirmation() {
+    const widget = document.getElementById('ticketai-widget');
+    for (const card of widget?.querySelectorAll('.ta-preset-card') || []) renderCardConfirmation(card);
+  }
+
+  function beginCardConfirmation(preset) {
+    clearCardConfirmation();
+    cardConfirmation = {id:String(preset.id), status:'running', results:{}, expanded:false};
+    refreshCardConfirmation();
+  }
+
+  function finishCardConfirmation(preset, results) {
+    if (!cardConfirmation || cardConfirmation.id !== String(preset.id)) return;
+    const labels = {descricao:'Descrição do ticket', produto:'Produto', categoria:'Categoria', assunto:'Assunto'};
+    const named = Object.fromEntries(Object.entries(results)
+      .filter(([key])=>!labels[key] || Array.isArray(preset.fields) || !!preset[key])
+      .map(([key,value])=>[labels[key] || key,value]));
+    cardConfirmation.results = named;
+    cardConfirmation.status = Object.values(named).some(ok=>ok===false) ? 'partial' : 'success';
+    refreshCardConfirmation();
+    if (cardConfirmation.status === 'success') {
+      const completed = cardConfirmation;
+      confirmationTimer = setTimeout(()=>{if(cardConfirmation===completed)clearCardConfirmation();},2000);
+    }
+  }
+
+  function renderCardConfirmation(card) {
+    const hint = card.querySelector('.ta-apply-hint');
+    if (!hint) return;
+    const state = cardConfirmation?.id === card.dataset.id ? cardConfirmation : null;
+    const status = state?.status || 'idle';
+    card.dataset.confirmation = status;
+    card.classList.remove('ta-filled','ta-application-failed');
+    const action = card.querySelector('.ta-apply-preset');
+    const name = card.querySelector('.ta-preset-name')?.textContent || '';
+    hint.innerHTML = status === 'running' ? '<span class="ta-confirm-spinner" aria-hidden="true"></span><span>Aplicando…</span>'
+      : status === 'success' ? '<span aria-hidden="true">✓</span><span>Aplicado</span>'
+      : status === 'partial' ? '<span aria-hidden="true">⚠</span><span>Conferir campos</span>' : uiIcon('arrow');
+    action.title = status === 'idle' ? 'Aplicar preset' : '';
+    action.setAttribute('aria-label',`${selectMode?'Selecionar':status==='partial'?'Conferir campos de':status==='success'?'Aplicado':status==='running'?'Aplicando':'Aplicar'} ${name}`);
+    if(status==='partial')action.setAttribute('aria-expanded',String(state.expanded));
+    else action.removeAttribute('aria-expanded');
+    const details = card.querySelector('.ta-confirm-details');
+    if (!details) return;
+    details.hidden = status !== 'partial' || !state.expanded;
+    if(status==='partial'){
+      const entries=Object.entries(state.results),confirmed=entries.filter(([,ok])=>ok===true).length;
+      details.querySelector('.ta-confirm-count').textContent=`${confirmed} de ${entries.length} campos aplicados`;
+      details.querySelector('.ta-confirm-pending').textContent=entries.filter(([,ok])=>ok===false).map(([label])=>`${label}: não confirmado`).join('\n');
+    }
+  }
   function getCurrentCard(card) {
     if (!card?.dataset?.id) return card;
     const widget = document.getElementById('ticketai-widget');
@@ -654,6 +771,8 @@
   }
 
   function clearPresetCancellationFeedback(card) {
+    clearCardConfirmation();
+    lastApplicationFeedback = null;
     card = getCurrentCard(card);
     const output = card?.querySelector('.ta-field-results');
     const summary = card?.querySelector('.ta-field-summary');
@@ -680,8 +799,11 @@
   async function applyPresetToCard(preset, card) {
     if (applyingPreset) return null;
     closePreviousFeedback();
+    lastApplicationFeedback = null;
     applyingPreset = true;
     activePresetApplication = {cancelled: false};
+    setInterfaceBusy(true);
+    beginCardConfirmation(preset);
     card?.setAttribute('aria-busy', 'true');
     try {
       const workflowResult = await applyWorkflowBeforeClassification(preset, card);
@@ -708,11 +830,20 @@
         if (output) output.hidden = true;
         if (summary) summary.hidden = true;
       }
+      finishCardConfirmation(preset,result);
       return result;
     } finally {
       applyingPreset = false;
+      setInterfaceBusy(false);
       activePresetApplication = null;
       card?.setAttribute('aria-busy', 'false');
+    }
+  }
+
+  function setInterfaceBusy(busy) {
+    const widget = document.getElementById('ticketai-widget');
+    for (const button of widget?.querySelectorAll('.ta-apply-preset,.ta-confirm-retry,.ta-more,#ta-btn-add,#ta-btn-gear,#ta-btn-organize-groups') || []) {
+      if (button.tagName === 'BUTTON') button.disabled = busy;
     }
   }
 
@@ -845,7 +976,8 @@
   }
   // Preenche um campo de múltipla seleção com uma ou várias opções.
   async function fillDynamicMultiField(labelText, values) {
-    const list = Array.isArray(values) ? values.filter(Boolean) : [values].filter(Boolean);
+    const list = [...new Set((Array.isArray(values) ? values : [values])
+      .map(value => String(value ?? '').trim()).filter(Boolean))];
 
     const btn = await waitForFieldButton(labelText);
     if (!btn) return false;
@@ -860,7 +992,16 @@
       1500, 50
     );
 
-    if (!container || !await clearMultiSelection(container)) return false;
+    if (!container) return false;
+    // Presets antigos marcam Categoria como multi, mas o HubSpot pode agora
+    // apresentar um Select--single. Não limpa nem escolhe parte de uma lista.
+    const single = (container.closest('.Select')?.getAttribute('class') || '')
+      .split(/\s+/).includes('Select--single');
+    if (single) {
+      if (list.length > 1) return false;
+      return list.length ? selectOptionByText(list[0], btn) : clearDropdownSelection(btn);
+    }
+    if (!await clearMultiSelection(container)) return false;
 
     let ok = true;
 
@@ -925,995 +1066,384 @@
   }
 
   function openUnifiedPresetModal(preset = null, initialFields = null) {
-    const overlay = document.getElementById('ta-modal-overlay');
-    const modal = overlay?.querySelector('.ta-modal');
-    if (!overlay || !modal) return;
-
-    const isEditing = !!preset;
-    let fields = (initialFields || []).map(normalizeBetaField);
-    let mode = Array.isArray(preset?.fields) ? 'hubspot' : 'manual';
-
-    modal.style.cssText = `width:100%;height:100%;max-width:none;max-height:none;padding:0;display:flex;flex-direction:column;overflow:hidden;background:#0D1117;color:#E6EDF3;border:0;border-radius:14px;box-shadow:none;`;
-    modal.innerHTML = `
-      <div class="ta-newpreset-header">
-        <div class="ta-newpreset-heading">
-          <span class="ta-newpreset-title-icon">${isEditing ? '✎' : '+'}</span>
-          <div>
-            <div class="ta-newpreset-title">${isEditing ? 'Editar preset' : 'Novo preset'}</div>
-            <div class="ta-newpreset-subtitle">Defina o encerramento e importe a classificação atual.</div>
-          </div>
-        </div>
-        <button id="ta-unified-close" class="ta-newpreset-close" type="button" aria-label="Fechar">×</button>
-      </div>
-      <div class="ta-newpreset-body">
-        <section class="ta-newpreset-section">
-          <div class="ta-newpreset-section-title"><span>1</span><strong>Informações</strong></div>
-          <div class="ta-newpreset-grid">
-            <div class="ta-newpreset-main-field">
-              <div class="ta-newpreset-label">Nome do preset</div>
-              <input id="ta-unified-name" class="ta-newpreset-input" type="text" value="${String(preset?.name || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Ex.: Atualização cadastral">
-            </div>
-            <div class="ta-newpreset-main-field">
-              <div class="ta-newpreset-label">Grupo</div>
-              <div class="ta-group-picker"><input id="ta-unified-group" class="ta-newpreset-input" type="text" autocomplete="off" value="${String(preset?.group || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" placeholder="Escolha ou crie um grupo"><div id="ta-group-suggestions" class="ta-group-suggestions" hidden></div></div>
-              <small class="ta-newpreset-hint">Escolha um grupo existente ou digite um novo.</small>
-            </div>
-          </div>
-        </section>
-
-        <section class="ta-newpreset-section">
-          <div class="ta-newpreset-section-title"><span>2</span><strong>Dados atuais do ticket</strong></div>
-          <div class="ta-newpreset-help">Importe Pipeline, Status e classificação de uma vez. O salvamento final no HubSpot continua manual.</div>
-          <button id="ta-read-ticket-data" class="ta-newpreset-mode" type="button">
-            <span class="ta-newpreset-mode-icon">↻</span>
-            <span><strong>Ler dados atuais</strong><small>Importe Pipeline, Status e a classificação visível no HubSpot.</small></span>
-          </button>
-          <div class="ta-newpreset-fields" style="margin-top:7px">
-            <div class="ta-newpreset-field"><div class="ta-newpreset-field-top"><input id="ta-workflow-pipeline-enabled" type="checkbox"><strong>Pipeline</strong></div><div class="ta-newpreset-field-bottom"><input id="ta-workflow-pipeline" class="ta-newpreset-input" type="text" placeholder="Ex.: [Sinistros] Pipeline de Suporte"></div></div>
-            <div class="ta-newpreset-field"><div class="ta-newpreset-field-top"><input id="ta-workflow-status-enabled" type="checkbox"><strong>Status do ticket</strong></div><div class="ta-newpreset-field-bottom"><input id="ta-workflow-status" class="ta-newpreset-input" type="text" placeholder="Ex.: Fechado"></div></div>
-          </div>
-        </section>
-
-        <div id="ta-unified-status" class="ta-newpreset-status"></div>
-
-        <section class="ta-newpreset-section ta-newpreset-fields-section">
-          <div class="ta-newpreset-section-head">
-            <div class="ta-newpreset-section-title"><span>3</span><strong>Campos</strong></div>
-            <span id="ta-unified-count" class="ta-newpreset-count"></span>
-          </div>
-          <div class="ta-newpreset-help">Selecione os campos e ajuste os valores que o preset deverá aplicar.</div>
-          <div id="ta-unified-fields" class="ta-newpreset-fields"></div>
-          <button id="ta-unified-add" class="ta-newpreset-add" type="button">＋ Adicionar campo</button>
-        </section>
-      </div>
-      <div class="ta-newpreset-footer"><button id="ta-unified-cancel" class="ta-newpreset-cancel" type="button">Cancelar</button><button id="ta-unified-save" class="ta-newpreset-save" type="button">Salvar</button></div>
-    `;
-
-    const fieldsContainer = modal.querySelector('#ta-unified-fields');
-    const countEl = modal.querySelector('#ta-unified-count');
-    const statusEl = modal.querySelector('#ta-unified-status');
-    const readTicketDataBtn = modal.querySelector('#ta-read-ticket-data');
-    const groupInput = modal.querySelector('#ta-unified-group');
-    const groupSuggestions = modal.querySelector('#ta-group-suggestions');
-    const workflow = normalizeWorkflow(preset?.workflow);
-    const workflowPipeline = modal.querySelector('#ta-workflow-pipeline');
-    const workflowStatus = modal.querySelector('#ta-workflow-status');
-    const workflowPipelineEnabled = modal.querySelector('#ta-workflow-pipeline-enabled');
-    const workflowStatusEnabled = modal.querySelector('#ta-workflow-status-enabled');
-    workflowPipeline.value = workflow.pipeline;
-    workflowStatus.value = workflow.status;
-    workflowPipelineEnabled.checked = !!workflow.pipeline;
-    workflowStatusEnabled.checked = !!workflow.status;
-
-    const renderGroupSuggestions = () => {
-      const query = groupInput.value.trim().toLowerCase();
-      const matches = getGroupNames().filter(group => !query || group.toLowerCase().includes(query));
-      groupSuggestions.innerHTML = matches.map(group => `<button type="button" class="ta-group-suggestion">${escapeHtml(group)}</button>`).join('');
-      groupSuggestions.hidden = matches.length === 0;
-      groupSuggestions.querySelectorAll('.ta-group-suggestion').forEach(button => {
-        button.onclick = () => { groupInput.value = button.textContent; groupSuggestions.hidden = true; };
-      });
-    };
-    groupInput.onfocus = renderGroupSuggestions;
-    groupInput.oninput = renderGroupSuggestions;
-    groupInput.onblur = () => setTimeout(() => { groupSuggestions.hidden = true; }, 120);
-
-    const setStatus = (text='', kind='') => { statusEl.textContent=text; statusEl.className='ta-newpreset-status'+(kind?' '+kind:''); };
-    const syncModes = () => { if (readTicketDataBtn) readTicketDataBtn.classList.toggle('is-active', mode === 'hubspot'); };
-
-    function renderFields() {
-      fieldsContainer.innerHTML='';
-      countEl.textContent=`${fields.filter(f=>f.enabled!==false).length}/${fields.length} selecionado${fields.length===1?'':'s'}`;
-      if(!fields.length){const e=document.createElement('div');e.className='ta-newpreset-empty';e.textContent='Nenhum campo adicionado. Clique em “＋ Adicionar campo”.';fieldsContainer.appendChild(e);return;}
-      fields.forEach((field,index)=>{
-        const row=document.createElement('div');row.className='ta-newpreset-field'+(field.enabled===false?' is-disabled':'');
+    const overlay=document.getElementById('ta-modal-overlay'),modal=overlay?.querySelector('.ta-modal');
+    if(!overlay||!modal)return;
+    const isEditing=!!preset;
+    let fields=(initialFields||[]).map(normalizeBetaField);
+    const workflow=normalizeWorkflow(preset?.workflow);
+    overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label',isEditing?'Editar preset':'Novo preset');
+    modal.style.cssText='';
+    modal.innerHTML=`<div class="ta-newpreset-header"><button type="button" id="ta-unified-close" class="ta-icon" aria-label="Voltar aos presets">${uiIcon('left')}</button><div><h2 class="ta-newpreset-title">${isEditing?'Editar preset':'Novo preset'}</h2><p class="ta-newpreset-subtitle">Defina o que será aplicado ao ticket.</p></div></div>
+      <form class="ta-newpreset-body" id="ta-editor-form">
+        <div class="ta-newpreset-grid"><label class="ta-newpreset-main-field">Nome do preset<input id="ta-unified-name" type="text" placeholder="Ex.: E-mail em cópia" value="${escapeHtml(preset?.name||'')}"></label><label class="ta-newpreset-main-field">Grupo<input id="ta-unified-group" type="text" placeholder="Ex.: E-mail" list="ta-group-options" value="${escapeHtml(preset?.group||'')}"><datalist id="ta-group-options">${getGroupNames().map(g=>`<option value="${escapeHtml(g)}">`).join('')}</datalist></label></div>
+        <section><h3 class="ta-newpreset-section-title">Preenchimento a partir do ticket</h3><button type="button" id="ta-read-ticket-data" class="ta-secondary ta-newpreset-mode">${uiIcon('read')}Ler dados atuais</button><p class="ta-newpreset-help">Importa os dados visíveis no HubSpot.</p></section>
+        <details class="ta-workflow-options" ${workflow.pipeline||workflow.status?'open':''}><summary>Pipeline e Status <span class="ta-demo-label">Opcional</span></summary><div class="ta-workflow-grid"><div class="ta-workflow-entry"><label><input id="ta-workflow-pipeline-enabled" type="checkbox" aria-label="Aplicar Pipeline" ${workflow.pipeline?'checked':''}>Pipeline</label><input id="ta-workflow-pipeline" aria-label="Pipeline" type="text" value="${escapeHtml(workflow.pipeline)}" placeholder="Pipeline de Suporte"></div><div class="ta-workflow-entry"><label><input id="ta-workflow-status-enabled" type="checkbox" aria-label="Aplicar Status do ticket" ${workflow.status?'checked':''}>Status do ticket</label><input id="ta-workflow-status" aria-label="Status do ticket" type="text" value="${escapeHtml(workflow.status)}" placeholder="Fechado"></div></div></details>
+        <div id="ta-unified-status" class="ta-newpreset-status" role="status" aria-live="polite"></div>
+        <section><div class="ta-newpreset-section-head"><h3 class="ta-newpreset-section-title">Campos do preset</h3><span id="ta-unified-count" class="ta-newpreset-count"></span></div><div id="ta-unified-fields"></div><button type="button" id="ta-unified-add" class="ta-newpreset-add">${uiIcon('plus')}Adicionar campo</button></section>
+      </form>
+      ${viewFooter('<button id="ta-unified-cancel" class="ta-newpreset-cancel" type="button">Cancelar</button><button id="ta-unified-save" class="ta-newpreset-save" type="button">Salvar preset '+uiIcon('check')+'</button>')}`;
+    const container=modal.querySelector('#ta-unified-fields'),count=modal.querySelector('#ta-unified-count'),status=modal.querySelector('#ta-unified-status');
+    const pipeline=modal.querySelector('#ta-workflow-pipeline'),stage=modal.querySelector('#ta-workflow-status'),pipelineOn=modal.querySelector('#ta-workflow-pipeline-enabled'),stageOn=modal.querySelector('#ta-workflow-status-enabled');
+    const syncWorkflow=()=>{pipeline.disabled=!pipelineOn.checked;stage.disabled=!stageOn.checked;};
+    pipelineOn.onchange=syncWorkflow;stageOn.onchange=syncWorkflow;syncWorkflow();
+    const setStatus=(text,kind='')=>{status.textContent=text;status.className='ta-newpreset-status '+kind;};
+    function renderFields(){
+      container.innerHTML='';count.textContent=`${fields.filter(f=>f.enabled!==false).length}/${fields.length} selecionados`;
+      if(!fields.length){const empty=document.createElement('p');empty.className='ta-newpreset-help';empty.textContent='Nenhum campo adicionado.';container.appendChild(empty);}
+      fields.forEach((f,i)=>{
+        const row=document.createElement('div');row.className='ta-newpreset-field'+(f.enabled===false?' is-disabled':'');
         const top=document.createElement('div');top.className='ta-newpreset-field-top';
-        const check=document.createElement('input');check.type='checkbox';check.checked=field.enabled!==false;check.onchange=()=>{field.enabled=check.checked;renderFields();};
-        const order=document.createElement('span');order.className='ta-newpreset-order';order.textContent=index+1;
-        const label=document.createElement('input');
-        label.type='text';label.className='ta-newpreset-input ta-field-label-input';
-        label.value=field.label;label.placeholder='Nome da propriedade';
-        label.setAttribute('aria-label','Nome da propriedade');
-        const remove=document.createElement('button');remove.type='button';remove.className='ta-newpreset-remove';remove.innerHTML='<span aria-hidden="true">×</span>';remove.title='Remover campo';remove.setAttribute('aria-label','Remover campo');remove.onclick=()=>{fields.splice(index,1);renderFields();};
-        top.append(check,order,label,remove);
-        const bottom=document.createElement('div');bottom.className='ta-newpreset-field-bottom';
-        field.type=betaInferTypeFromLabel(field.label,field.type);
-        const value=document.createElement('input');
-        value.type='text';
-        value.className='ta-newpreset-input ta-field-value-input';
-        value.value=betaFieldDisplayValue(field);
-        value.placeholder=field.type==='multi'?'Valores separados por vírgula':'Valor do campo';
-        value.oninput=()=>field.value=field.type==='multi'?value.value.split(',').map(v=>v.trim()).filter(Boolean):value.value;
-        label.oninput=()=>{
-          field.label=label.value;
-          field.type=betaInferTypeFromLabel(field.label,'dropdown');
-          value.placeholder=field.type==='multi'?'Valores separados por vírgula':'Valor do campo';
-          value.oninput();
-        };
-        bottom.append(value);
-        row.append(top,bottom);
-        fieldsContainer.appendChild(row);
+        const check=document.createElement('input');check.type='checkbox';check.checked=f.enabled!==false;check.setAttribute('aria-label',`Aplicar campo ${f.label||i+1}`);check.onchange=()=>{f.enabled=check.checked;renderFields();};
+        const label=document.createElement('input');label.className='ta-field-label-input';label.type='text';label.value=f.label;label.placeholder='Nome da propriedade';label.setAttribute('aria-label',`Nome da propriedade ${i+1}`);
+        const remove=document.createElement('button');remove.className='ta-icon ta-newpreset-remove';remove.type='button';remove.innerHTML=uiIcon('close');remove.setAttribute('aria-label',`Remover campo ${i+1}`);remove.onclick=()=>{fields.splice(i,1);renderFields();};
+        f.type=betaInferTypeFromLabel(f.label,f.type);
+        const value=document.createElement(f.type==='textarea'?'textarea':'input');if(value.tagName==='INPUT')value.type='text';value.className='ta-field-value-input';value.value=betaFieldDisplayValue(f);value.placeholder=f.type==='multi'?'Valores separados por vírgula':'Deixe vazio para limpar';value.setAttribute('aria-label',`Valor de ${f.label||'campo '+(i+1)}`);
+        value.oninput=()=>{f.value=f.type==='multi'?value.value.split(',').map(v=>v.trim()).filter(Boolean):value.value;};
+        label.oninput=()=>{f.label=label.value;f.type=betaInferTypeFromLabel(f.label,f.type);value.oninput();check.setAttribute('aria-label',`Aplicar campo ${f.label||i+1}`);value.setAttribute('aria-label',`Valor de ${f.label||'campo '+(i+1)}`);};
+        top.append(check,label,remove);row.append(top,value);container.appendChild(row);
       });
     }
-
-    const readTicketData = () => {
-      const current = readCurrentWorkflow();
-      if (current.pipeline) { workflowPipeline.value = current.pipeline; workflowPipelineEnabled.checked = true; }
-      if (current.status) { workflowStatus.value = current.status; workflowStatusEnabled.checked = true; }
-      const detected = readCurrentClassification();
-      if (detected.length) {
-        fields = detected.map(f => normalizeBetaField({...f, enabled:String(betaFieldDisplayValue(f)).trim() !== '' && !/proprietário do ticket/i.test(f.label)}));
-        mode = 'hubspot';
-        renderFields();
-      }
-      const feedback = describeTicketImport(current, detected.length);
-      syncModes();
-      setStatus(feedback.text, feedback.kind);
+    modal.querySelector('#ta-read-ticket-data').onclick=()=>{
+      const current=readCurrentWorkflow(),detected=readCurrentClassification();
+      if(current.pipeline){pipeline.value=current.pipeline;pipelineOn.checked=true;}
+      if(current.status){stage.value=current.status;stageOn.checked=true;}
+      syncWorkflow();if(current.pipeline||current.status)modal.querySelector('.ta-workflow-options').open=true;
+      if(detected.length){fields=detected.map(f=>normalizeBetaField({...f,enabled:String(betaFieldDisplayValue(f)).trim()!==''&&!/proprietário do ticket/i.test(f.label)}));renderFields();}
+      const result=describeTicketImport(current,detected.length);setStatus(result.text,result.kind);
     };
-
-    if (readTicketDataBtn) readTicketDataBtn.onclick=readTicketData;
-    modal.querySelector('#ta-unified-add').onclick=()=>{fields.push({label:'',value:'',type:'dropdown',enabled:true});renderFields();const labels=fieldsContainer.querySelectorAll('.ta-field-label-input');if(labels.length)labels[labels.length-1].focus();};
-    modal.querySelector('#ta-unified-close').onclick=closeModal;
-    modal.querySelector('#ta-unified-cancel').onclick=closeModal;
-    modal.querySelector('#ta-unified-save').onclick=async()=>{
-      const name=modal.querySelector('#ta-unified-name').value.trim();
-      const typedGroup=modal.querySelector('#ta-unified-group').value.trim();
-      const existingGroup=getGroupNames().find(group => group.toLowerCase() === typedGroup.toLowerCase());
-      const group=existingGroup || typedGroup || 'GERAL';
-      if(!name){await showAlertModal('Informe um nome para o preset.');return;}
-      const clean=fields.map(normalizeBetaField).filter(f=>f.enabled);
-      if(clean.some(f=>!f.label)){await showAlertModal('Informe o nome de cada campo selecionado.');return;}
-      if(!clean.length){await showAlertModal('Adicione ou selecione pelo menos um campo para salvar o preset.');return;}
-      const savedWorkflow = {
-        pipeline: workflowPipelineEnabled.checked ? workflowPipeline.value.trim() : '',
-        status: workflowStatusEnabled.checked ? workflowStatus.value.trim() : ''
-      };
-      const data={name,group,fields:clean,...((savedWorkflow.pipeline || savedWorkflow.status) ? {workflow:savedWorkflow} : {})};
-      lastApplicationFeedback = null;
-      if(isEditing){const existing=presets.find(x=>x.id===preset.id);if(existing){Object.assign(existing,data);if(!data.workflow)delete existing.workflow;}}else{presets.push({id:generateId(),...data});}
+    modal.querySelector('#ta-unified-add').onclick=()=>{fields.push({label:'',value:'',type:'dropdown',enabled:true});renderFields();container.querySelectorAll('.ta-field-label-input')[fields.length-1]?.focus();};
+    modal.querySelector('#ta-unified-close').onclick=closeModal;modal.querySelector('#ta-unified-cancel').onclick=closeModal;
+    const savePreset=()=>{
+      const name=modal.querySelector('#ta-unified-name').value.trim(),typedGroup=modal.querySelector('#ta-unified-group').value.trim();
+      const group=getGroupNames().find(g=>g.toLowerCase()===typedGroup.toLowerCase())||typedGroup||'GERAL';
+      const all=fields.map(normalizeBetaField),enabled=all.filter(f=>f.enabled!==false);
+      const savedWorkflow={pipeline:pipelineOn.checked?pipeline.value.trim():'',status:stageOn.checked?stage.value.trim():''};
+      if(!name){setStatus('Informe um nome para o preset.','error');modal.querySelector('#ta-unified-name').focus();return;}
+      if(enabled.some(f=>!f.label)){setStatus('Informe o nome de todas as propriedades selecionadas.','error');return;}
+      if(pipelineOn.checked&&!savedWorkflow.pipeline){setStatus('Informe a Pipeline ou desative sua aplicação.','error');return;}
+      if(stageOn.checked&&!savedWorkflow.status){setStatus('Informe o Status ou desative sua aplicação.','error');return;}
+      if(!enabled.length&&!savedWorkflow.pipeline&&!savedWorkflow.status){setStatus('Selecione ao menos um campo, Pipeline ou Status.','error');return;}
+      const data={name,group,fields:all,...(savedWorkflow.pipeline||savedWorkflow.status?{workflow:savedWorkflow}:{})};
+      lastApplicationFeedback=null;
+      if(isEditing){const existing=presets.find(p=>p.id===preset.id);if(existing){Object.assign(existing,data);if(!data.workflow)delete existing.workflow;}}
+      else presets.push({id:generateId(),...data});
       closeModal();save();
     };
-
-    overlay.classList.add('is-visible');syncModes();renderFields();setStatus(mode==='hubspot'?'Preset dinâmico: revise os campos antes de salvar.':'',mode==='hubspot'?'success':'');
-    setTimeout(()=>modal.querySelector('#ta-unified-name')?.focus(),0);
+    modal.querySelector('#ta-unified-save').onclick=savePreset;
+    modal.querySelector('#ta-editor-form').onsubmit=e=>{e.preventDefault();savePreset();};
+    overlay.classList.add('is-visible');renderFields();setTimeout(()=>modal.querySelector('#ta-unified-name')?.focus(),0);
   }
 
 
-  // ---------------------------------------------------------------------
-  // ESTILOS
-  // ---------------------------------------------------------------------
+  // UI da versão 2.4: mesma composição e tokens do protótipo aprovado.
+  let secondaryView = 'list';
+  let backupDraft = '';
+  let backupError = '';
+  let floatingCardMenu = null;
+
+  function productSignature() {
+    return `<div class="ta-dev-footer"><div class="ta-dev-signature"><span>Desenvolvido por</span> <a href="https://m.lagamba.workers.dev/" target="_blank" rel="noopener noreferrer">Lagamba Tech</a></div><span class="ta-version">V ${TICKETAI_VERSION}</span></div>`;
+  }
+
+  function viewHeading(title, subtitle) {
+    return `<div class="ta-view-heading"><button type="button" class="ta-icon" data-ta-action="back" aria-label="Voltar aos presets">${uiIcon('left')}</button><div><h2>${title}</h2><p>${subtitle}</p></div></div>`;
+  }
+
+  function viewFooter(buttons) {
+    return `<footer class="ta-footer"><div class="ta-footer-row">${buttons}</div>${productSignature()}</footer>`;
+  }
 
   function injectStyles() {
+    if (document.getElementById('ticketai-design-v24')) return;
     const style = document.createElement('style');
+    style.id = 'ticketai-design-v24';
     style.textContent = `
-      #ticketai-widget {
-        position: fixed; top: 20px; right: 20px; width: 380px; height: 650px;
-        min-width: 280px; min-height: 300px; background: #0D1117;
-        border: 1px solid #2A313B; border-radius: 16px;
-        z-index: 2147483647; display: flex; flex-direction: column;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.6); font-family: 'Inter', sans-serif;
-        color: #E6EDF3; overflow: visible;
-      }
-      .ta-resizer { position: absolute; top: 0; width: 6px; height: 100%; cursor: ew-resize; z-index: 10001; }
-      .ta-resizer-left { left: 0; }
-      .ta-resizer-right { right: 0; }
-      .ta-resizer-vertical { position: absolute; left: 0; width: 100%; height: 6px; cursor: ns-resize; z-index: 10001; }
-      .ta-resizer-top { top: 0; }
-      .ta-resizer-bottom { bottom: 0; }
-      #ticketai-widget.is-minimized { height: 36px !important; min-height: 36px !important; overflow: hidden; }
-      #ticketai-widget.is-minimized .ta-body, #ticketai-widget.is-minimized .ta-footer { display: none !important; }
-      #ticketai-widget.is-peek { height: 115px !important; min-height: 115px !important; overflow: hidden; }
-      #ticketai-widget.is-peek .ta-footer { display: none !important; }
-      #ticketai-widget.is-peek .ta-search-row { display: none !important; }
-      #ticketai-widget.is-peek .ta-selection-toolbar { display: none !important; }
-      #ticketai-widget.is-peek .ta-body { padding: 8px 15px; }
-      #ticketai-widget.is-peek .ta-preset-card { margin-bottom: 0; }
-      #ticketai-widget.ta-anim { transition: height 0.25s ease; }
-      .ta-header { padding: 0 12px; height: 36px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2A313B; cursor: move; flex-shrink: 0; border-radius: 16px 16px 0 0; }
-      .ta-header span.ta-title { font-weight: 700; font-size: 13px; pointer-events: none; letter-spacing: 0.2px; }
-      .ta-header span.ta-title .ta-title-ticket { color: #E6EDF3; }
-      .ta-header span.ta-title .ta-title-ai { color: #F59E0B; }
-      .ta-btn-group { display: flex; gap: 10px; z-index: 10002; align-items: center; }
-      .ta-help-popover { position: absolute; top: calc(100% + 8px); right: 0; background: #161B22; border: 1px solid #2A313B; border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 220px; box-shadow: 0 16px 34px rgba(0,0,0,0.55); opacity: 0; transform: translateY(-6px) scale(0.97); pointer-events: none; transition: 0.18s ease; z-index: 10010; cursor: default; }
-      .ta-help-popover.is-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
-      .ta-help-title { font-size: 10px; font-weight: 800; color: #9BA4B5; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 2px; }
-      .ta-help-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: #E6EDF3; }
-      .ta-help-key { font-size: 10px; font-weight: 700; color: #F59E0B; background: rgba(245,158,11,0.12); border-radius: 5px; padding: 2px 6px; flex-shrink: 0; white-space: nowrap; }
-      .ta-h-btn { cursor: pointer; font-size: 13px; opacity: 0.55; transition: 0.2s; line-height: 1; color: #9BA4B5; }
-      .ta-h-btn:hover { opacity: 1; color: #E6EDF3; }
-      .ta-h-btn#ta-btn-close:hover { color: #EF4444; }
-      .ta-body { flex: 1; overflow-y: auto; padding: 15px; margin-right: 6px; display: flex; flex-direction: column; }
-      .ta-body::-webkit-scrollbar { width: 6px; }
-      .ta-body::-webkit-scrollbar-track { background: transparent; }
-      .ta-body::-webkit-scrollbar-thumb { background: #2A313B; border-radius: 10px; }
-      .ta-body::-webkit-scrollbar-thumb:hover { background: #3a4452; }
-      .ta-search-row { display: flex; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
-      .ta-organize-groups { width:34px; flex:0 0 34px; border:1px solid #2A313B; border-radius:7px; background:#161B22; color:#8B949E; cursor:pointer; }
-      .ta-organize-groups:hover, .ta-organize-groups.is-active { border-color:#F59E0B; color:#F59E0B; }
-      .ta-group-label.ta-group-organizing { cursor:grab; border:1px dashed #596579; padding:5px 7px; border-radius:6px; }
-      .ta-group-label.ta-group-organizing, .ta-group-label.ta-group-organizing * { user-select:none; }
-      #ticketai-widget.ta-organizing-groups .ta-preset-card { pointer-events:none; user-select:none; }
-      .ta-group-label.ta-group-organizing.is-dragging { cursor:grabbing; border-color:#F59E0B; background:rgba(245,158,11,.18); box-shadow:0 0 0 2px rgba(245,158,11,.22); color:#F59E0B; opacity:1; animation:ta-group-drag-pulse .9s ease-in-out infinite; }
-      .ta-group-drag-ghost { position:fixed; z-index:2147483647; pointer-events:none; box-sizing:border-box; padding:7px 9px; border:1px solid #F59E0B; border-radius:6px; background:#242A33; color:#F59E0B; font-size:10px; font-weight:700; box-shadow:0 14px 24px rgba(0,0,0,.55), 0 0 0 2px rgba(245,158,11,.35); opacity:.9; transform:rotate(1deg) scale(1.02); }
-      @keyframes ta-group-drag-pulse { 0%,100% { transform:translateY(0) scale(1); box-shadow:0 2px 0 rgba(245,158,11,.18), 0 0 0 2px rgba(245,158,11,.28); } 50% { transform:translateY(-3px) scale(1.012); box-shadow:0 10px 0 -3px rgba(245,158,11,.16), 0 14px 20px rgba(0,0,0,.42), 0 0 0 2px rgba(245,158,11,.55); } }
-      @media (prefers-reduced-motion: reduce) { .ta-group-label.ta-group-organizing.is-dragging { animation:none; } }
-      .ta-group-label.ta-group-organizing.is-drag-over { border-color:#F59E0B; background:rgba(245,158,11,.1); }
-      .ta-group-order-controls { float:right; display:flex; gap:4px; margin-top:-2px; }
-      .ta-group-order-controls button { width:24px; height:22px; display:inline-flex; align-items:center; justify-content:center; padding:0; border:1px solid #3A4452; border-radius:6px; background:rgba(22,27,34,.72); color:#9BA4B5; cursor:pointer; font-size:0; line-height:1; transition:background .15s ease,border-color .15s ease,color .15s ease,transform .1s ease; }
-      .ta-group-order-controls button::before { font-size:13px; font-weight:800; line-height:1; }
-      .ta-group-order-controls button:first-child::before { content:'⌃'; transform:translateY(1px); }
-      .ta-group-order-controls button:last-child::before { content:'⌄'; transform:translateY(-1px); }
-      .ta-group-order-controls button:hover { border-color:#F59E0B; background:rgba(245,158,11,.12); color:#F59E0B; }
-      .ta-group-order-controls button:active { transform:scale(.94); }
-      .ta-search-input { flex: 1; min-width: 0; background: #0D1117; border: 1px solid #2A313B; color: #E6EDF3; border-radius: 8px; padding: 8px 12px; font-size: 12px; outline: none; box-sizing: border-box; transition: 0.15s; }
-      .ta-search-input::placeholder { color: #6B7280; }
-      .ta-search-input:focus { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,0.12); }
-      .ta-highlight { background: rgba(245,158,11,0.35); color: #fff; border-radius: 3px; padding: 0 1px; }
-      .ta-btn-square { width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; background: transparent; color: #F59E0B; border: 1px solid #F59E0B; font-weight: 700; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: 0.15s; }
-      .ta-btn-square:hover { background: #F59E0B; color: #0D1117; }
-      .ta-group-label { font-size: 10px; color: #9BA4B5; text-transform: uppercase; letter-spacing: 0.6px; margin: 14px 0 6px; font-weight: 700; }
-      .ta-group-label:first-child { margin-top: 0; }
-      .ta-preset-card { position: relative; overflow: hidden; background: #161B22; border: 1px solid #2A313B; border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s; display: flex; flex-direction: column; gap: 0; }
-      .ta-preset-card:hover { background: #1E242C; }
-      .ta-preset-card.ta-filled { border-color: #F59E0B !important; box-shadow: 0 0 0 2px rgba(245,158,11,0.25); }
-      .ta-preset-card.ta-application-failed { border-color: #EF4444 !important; box-shadow: 0 0 0 2px rgba(239,68,68,0.28); }
-      .ta-field-results { white-space: pre-line; font-size: 11px; line-height: 1.5; color: #E6EDF3; margin-top: 8px; overflow-wrap: anywhere; }
-      .ta-field-results[hidden] { display: none; }
-      .ta-field-summary { display: none; font-size: 10px; margin-top: 5px; color: #E6EDF3; }
-      #ticketai-widget.is-peek .ta-field-results { display: none; }
-      #ticketai-widget.is-peek .ta-field-summary:not([hidden]) { display: block; }
-      .ta-progress-bar { position: absolute; top: 0; left: 0; height: 2px; width: 0%; background: #F59E0B; border-radius: 2px 2px 0 0; transition: width 0.28s ease; }
-      .ta-card-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-      .ta-preset-name { font-size: 13px; font-weight: 500; color: #E6EDF3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; line-height: 1.3; }
-      .ta-card-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-      .ta-preset-actions { display: flex; gap: 4px; align-items: center; }
-      .ta-icon-btn { font-size: 12px; opacity: 0.85; cursor: pointer; transition: 0.15s; width: 21px; height: 21px; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
-      .ta-icon-btn.ta-edit { color: #F59E0B; }
-      .ta-icon-btn.ta-edit:hover { background: rgba(245,158,11,0.14); opacity: 1; }
-      .ta-icon-btn.ta-dup { color: #E6EDF3; }
-      .ta-icon-btn.ta-dup:hover { background: rgba(230,237,243,0.1); opacity: 1; }
-      .ta-icon-btn.ta-danger { color: #EF4444; }
-      .ta-icon-btn.ta-danger:hover { background: rgba(239,68,68,0.14); opacity: 1; }
-      .ta-preset-checkbox-wrap { display: none; flex-shrink: 0; }
-      .ta-preset-card.select-mode-active .ta-preset-checkbox-wrap { display: flex; }
-      .ta-preset-card.select-mode-active .ta-preset-actions { display: none; }
-      .ta-preset-card.select-mode-active.is-selected { border-color: #F59E0B; background: rgba(245,158,11,0.10); }
-      .ta-preset-card.select-mode-active.is-selected::before { content: ''; position: absolute; top: 0; left: 0; bottom: 0; width: 3px; background: #F59E0B; }
-      .ta-checkbox { width: 16px; height: 16px; accent-color: #F59E0B; cursor: pointer; }
-      .ta-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 20px; gap: 6px; flex: 1; }
-      .ta-empty-icon { font-size: 26px; margin-bottom: 6px; opacity: 0.7; }
-      .ta-empty-state > div:not(.ta-empty-icon):not(.ta-empty-sub) { color: #E6EDF3; font-size: 13px; font-weight: 600; }
-      .ta-empty-sub { font-size: 11px; color: #9BA4B5; }
-      .ta-empty-cta { margin-top: 12px; }
-      .ta-preset-count { text-align: center; font-size: 10px; color: #9BA4B5; margin-top: 4px; }
-      .ta-footer { padding: 12px 15px 8px; background: #0D1117; border-top: 1px solid #2A313B; flex-shrink: 0; border-radius: 0 0 16px 16px; }
-      .ta-footer-row { display: flex; gap: 8px; }
-      .ta-btn-add { display: flex; align-items: center; justify-content: center; gap: 7px; flex: 1; background: transparent; color: #F59E0B; border: 1px solid #F59E0B; border-radius: 8px; padding: 9px 16px; font-weight: 700; cursor: pointer; text-transform: uppercase; letter-spacing: 0.6px; font-size: 11px; transition: 0.15s; }
-      .ta-btn-add:hover { background: #F59E0B; color: #0D1117; }
-      .ta-gear-wrap { position: relative; flex-shrink: 0; }
-      .ta-btn-gear { width: 38px; height: 100%; min-height: 38px; border-radius: 8px; background: transparent; border: 1px solid #2A313B; color: #9BA4B5; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.15s; }
-      .ta-btn-gear:hover, .ta-btn-gear.is-active { border-color: #F59E0B; color: #F59E0B; }
-      .ta-popover { position: absolute; bottom: calc(100% + 8px); right: 0; background: #161B22; border: 1px solid #2A313B; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 7px; min-width: 260px; max-width: 300px; box-shadow: 0 20px 45px rgba(0,0,0,0.6); opacity: 0; transform: translateY(6px) scale(0.97); pointer-events: none; transition: 0.18s ease; z-index: 10010; }
-      .ta-popover.is-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
-      .ta-popover-header { display: flex; align-items: center; gap: 8px; padding: 2px 4px 6px; border-bottom: 1px solid #2A313B; margin-bottom: 2px; }
-      .ta-popover-header-icon { color: #F59E0B; font-size: 14px; }
-      .ta-popover-header-title { flex: 1; font-size: 13px; font-weight: 700; color: #E6EDF3; text-transform: uppercase; letter-spacing: 0.4px; }
-      .ta-popover-close { cursor: pointer; font-size: 13px; color: #9BA4B5; opacity: 0.8; transition: 0.15s; line-height: 1; }
-      .ta-popover-close:hover { color: #E6EDF3; opacity: 1; }
-      .ta-popover-item { position: relative; display: flex; align-items: center; gap: 12px; font-size: 13px; padding: 10px 12px; background: rgba(255,255,255,0.02); color: #E6EDF3; border: 1px solid transparent; border-radius: 10px; cursor: pointer; transition: 0.15s; text-align: left; font-weight: 500; width: 100%; }
-      .ta-popover-item:hover { background: #1E242C; }
-      .ta-popover-item-icon { font-size: 14px; line-height: 1; flex-shrink: 0; width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; }
-      .ta-icon-amber { background: rgba(245,158,11,0.14); color: #F59E0B; }
-      .ta-icon-blue { background: rgba(56,189,248,0.14); color: #38BDF8; }
-      .ta-icon-danger { background: rgba(239,68,68,0.14); color: #EF4444; }
-      .ta-popover-item-text { flex: 1; }
-      .ta-popover-chevron { color: #6B7280; font-size: 15px; flex-shrink: 0; }
-      .ta-popover-accent-amber { border-left: 3px solid #F59E0B; padding-left: 10px; }
-      .ta-popover-accent-danger { border-left: 3px solid #EF4444; padding-left: 10px; }
-      .ta-text-danger { color: #EF4444; }
-      .ta-selection-toolbar { display: none; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 6px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; font-size: 10px; color: #F59E0B; flex-shrink: 0; overflow: hidden; }
-      .ta-selection-toolbar.is-visible { display: flex; }
-      .ta-selection-toolbar #ta-selection-count { flex: 0 0 auto; white-space: nowrap; }
-      .ta-selection-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; flex: 0 0 auto; }
-      .ta-selection-actions button { font-size: 9px; padding: 5px 8px; white-space: nowrap; background: transparent; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 7px; cursor: pointer; text-transform: uppercase; font-weight: bold; transition: 0.15s; }
-      .ta-selection-actions button:hover { border-color: #9BA4B5; }
-      .ta-selection-actions .ta-danger-inline { color: #EF4444; border-color: rgba(239,68,68,0.35); }
-      .ta-selection-actions .ta-danger-inline:hover { border-color: #EF4444; background: rgba(239,68,68,0.1); }
-      .ta-dev-footer { text-align: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid #2A313B; display: flex; flex-direction: column; gap: 1px; }
-      .ta-dev-label { font-size: 8px; color: #6B7280; text-transform: uppercase; letter-spacing: 2px; line-height: 1.2; }
-      .ta-dev-name { color: #F59E0B; font-weight: 800; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; line-height: 1.2; }
-      .ta-version { font-size: 8px; color: #6B7280; margin-top: 1px; letter-spacing: 0.5px; line-height: 1; }
-      .ta-undo-toast { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #161B22; border: 1px solid #2A313B; border-radius: 10px; padding: 0 12px; font-size: 11px; color: #E6EDF3; overflow: hidden; max-height: 0; opacity: 0; margin-bottom: 0; flex-shrink: 0; transition: max-height 0.2s ease, opacity 0.2s ease, margin-bottom 0.2s ease, padding 0.2s ease; }
-      .ta-undo-toast.is-visible { max-height: 40px; opacity: 1; margin-bottom: 10px; padding: 9px 12px; }
-      .ta-undo-toast button { background: none; border: none; color: #F59E0B; font-weight: 800; cursor: pointer; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; flex-shrink: 0; }
-      .ta-undo-toast button:hover { text-decoration: underline; }
-      .ta-modal-overlay { position: absolute; inset: 0; box-sizing: border-box; padding: 0; background: rgba(13,17,23,.98); display: flex; align-items: stretch; justify-content: stretch; z-index: 10050; opacity: 0; pointer-events: none; transition: opacity .15s ease; border-radius: 16px; overflow: hidden; }
-      .ta-modal-overlay.is-visible { opacity: 1; pointer-events: auto; }
-      .ta-modal { background: #0D1117; border: 0; border-radius: 16px; padding: 0; width: 100%; max-width: none; height: 100%; max-height: none; display: flex; flex-direction: column; gap: 0; box-shadow: none; overflow: hidden; }
-      .ta-modal::-webkit-scrollbar, .ta-newpreset-body::-webkit-scrollbar { width: 7px; }
-      .ta-modal::-webkit-scrollbar-track, .ta-newpreset-body::-webkit-scrollbar-track { background: transparent; }
-      .ta-modal::-webkit-scrollbar-thumb, .ta-newpreset-body::-webkit-scrollbar-thumb { background: #303846; border-radius: 10px; }
-      .ta-modal::-webkit-scrollbar-thumb:hover, .ta-newpreset-body::-webkit-scrollbar-thumb:hover { background: #465264; }
-      .ta-modal, .ta-newpreset-body { scrollbar-width:thin; scrollbar-color:#303846 transparent; }
-      .ta-modal::-webkit-scrollbar-button, .ta-newpreset-body::-webkit-scrollbar-button { display:none; width:0; height:0; }
-      .ta-modal-title { font-size: 15px; font-weight: 800; color: #E6EDF3; letter-spacing: .1px; }
-      .ta-modal-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid #2A313B; flex-shrink: 0; }
-      .ta-modal-close { width: 30px; height: 30px; display:flex; align-items:center; justify-content:center; cursor: pointer; font-size: 19px; opacity: .65; transition: .15s; line-height: 1; color: #9BA4B5; border-radius: 7px; }
-      .ta-modal-close:hover { opacity: 1; color: #E6EDF3; background: #1E242C; }
-      .ta-field-label { font-size: 10px; color: #9BA4B5; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; letter-spacing: .55px; }
-      .ta-field-input { width: 100%; background: #161B22; color: #E6EDF3; border: 1px solid #2A313B; border-radius: 8px; padding: 9px 10px; outline: none; font-size: 12px; box-sizing: border-box; transition: .15s; }
-      .ta-field-input::placeholder { color: #626D7C; }
-      .ta-field-input:focus { border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,.10); }
-      .ta-modal-actions { display: flex; gap: 8px; margin-top: 6px; }
-      .ta-cancel-link { background: transparent; color: #9BA4B5; border: none; font-size: 11px; cursor: pointer; margin-top: 5px; text-decoration: underline; text-align: center; width: 100%; display: block; transition: .15s; }
-      .ta-cancel-link:hover { color: #E6EDF3; }
-      .ta-newpreset-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:52px; padding:10px 13px; border-bottom:1px solid #2A313B; flex-shrink:0; background:#0D1117; }
-      .ta-newpreset-heading { display:flex; align-items:center; gap:9px; min-width:0; }
-      .ta-newpreset-title-icon { width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid rgba(245,158,11,.45); border-radius:7px; color:#F59E0B; font-size:15px; font-weight:800; flex-shrink:0; }
-      .ta-newpreset-title { font-size:13px; font-weight:800; color:#E6EDF3; letter-spacing:.1px; }
-      .ta-newpreset-subtitle { margin-top:2px; color:#6F7A8A; font-size:9px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .ta-newpreset-close { width:27px; height:27px; display:flex; align-items:center; justify-content:center; border:0; background:transparent; color:#7D8797; font-size:19px; line-height:1; cursor:pointer; border-radius:7px; padding:0; flex-shrink:0; }
-      .ta-newpreset-close:hover { color:#E6EDF3; background:#161B22; }
-      .ta-newpreset-body { padding:12px 13px; overflow:auto; min-height:0; background:#0D1117; }
-      .ta-newpreset-grid { display:grid; grid-template-columns:1fr; gap:8px; }
-      .ta-newpreset-main-field { min-width:0; }
-      .ta-newpreset-label { font-size:9px; font-weight:800; color:#8B95A5; text-transform:uppercase; letter-spacing:.55px; margin-bottom:5px; }
-      .ta-newpreset-section-label { margin-top:13px; }
-      .ta-newpreset-input { width:100%; box-sizing:border-box; height:34px; background:#161B22; color:#E6EDF3; border:1px solid #2A313B; border-radius:7px; padding:7px 9px; font-size:11px; outline:none; }
-      .ta-newpreset-input::placeholder { color:#626D7C; }
-      .ta-newpreset-input:focus { border-color:#F59E0B; box-shadow:0 0 0 2px rgba(245,158,11,.08); }
-      .ta-newpreset-hint { display:block; margin-top:4px; color:#8B949E; font-size:10px; }
-      .ta-group-picker { position:relative; }
-      .ta-group-suggestions { position:absolute; z-index:20; top:calc(100% + 4px); left:0; right:0; max-height:170px; overflow-y:auto; padding:5px; background:#1C2128; border:1px solid #3A4452; border-radius:8px; box-shadow:0 10px 24px rgba(0,0,0,.45); }
-      .ta-group-suggestions { scrollbar-width:thin; scrollbar-color:#3A4452 transparent; }
-      .ta-group-suggestions::-webkit-scrollbar { width:6px; }
-      .ta-group-suggestions::-webkit-scrollbar-track { background:transparent; }
-      .ta-group-suggestions::-webkit-scrollbar-thumb { background:#3A4452; border-radius:10px; }
-      .ta-group-suggestions::-webkit-scrollbar-thumb:hover { background:#596579; }
-      .ta-group-suggestions::-webkit-scrollbar-button { display:none; width:0; height:0; }
-      .ta-group-suggestions[hidden] { display:none; }
-      .ta-group-suggestion { display:block; width:100%; padding:8px 9px; border:0; border-radius:5px; background:transparent; color:#E6EDF3; text-align:left; font:inherit; font-size:11px; cursor:pointer; }
-      .ta-group-suggestion:hover { background:#2A313B; color:#F59E0B; }
-      .ta-newpreset-modes { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-
-      .ta-newpreset-origin-legend {
-        margin-top: 6px;
-        color: #626D7C;
-        font-size: 8px;
-        line-height: 1.35;
-      }
-      .ta-newpreset-mode {
-        min-height: 45px;
-        padding: 8px 10px;
-      }
-      .ta-newpreset-mode-icon {
-        width: 27px;
-        height: 27px;
-      }
-      .ta-newpreset-mode strong {
-        font-size: 10px;
-        margin: 0;
-      }
-      .ta-newpreset-mode { display:flex; align-items:center; gap:8px; text-align:left; padding:9px; background:#11161D; color:#E6EDF3; border:1px solid #2A313B; border-radius:8px; cursor:pointer; transition:.15s; min-height:51px; box-sizing:border-box; }
-      .ta-newpreset-mode:hover { border-color:#465264; background:#151B23; }
-      .ta-newpreset-mode.is-active { border-color:#F59E0B; background:rgba(245,158,11,.06); box-shadow:inset 0 0 0 1px rgba(245,158,11,.10); }
-      .ta-newpreset-mode-icon { width:25px; height:25px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:6px; background:#1A2029; color:#E6EDF3; font-size:12px; }
-      .ta-newpreset-mode strong { display:block; font-size:10px; margin-bottom:2px; }
-      .ta-newpreset-mode small { display:block; color:#6F7A8A; font-size:8px; line-height:1.3; }
-      .ta-newpreset-status { min-height:13px; margin:6px 0 1px; color:#6F7A8A; font-size:9px; line-height:1.3; }
-      .ta-newpreset-status.success { color:#8FD694; }
-      .ta-newpreset-status.error { color:#FCA5A5; }
-      .ta-newpreset-section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:8px; margin-top:10px; }
-      .ta-newpreset-help { color:#626D7C; font-size:8px; line-height:1.3; }
-      .ta-newpreset-count { flex-shrink:0; color:#F59E0B; font-size:9px; font-weight:800; }
-      .ta-newpreset-fields { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
-      .ta-newpreset-field { padding:7px; background:#11161D; border:1px solid #2A313B; border-radius:8px; transition:.15s; }
-      .ta-newpreset-field:hover { border-color:#354052; }
-      .ta-newpreset-field.is-disabled { opacity:.48; }
-      .ta-newpreset-field-top { display:flex; align-items:center; gap:5px; }
-      .ta-newpreset-order { width:15px; color:#5F6978; font-size:8px; text-align:center; flex-shrink:0; }
-      .ta-field-label-input { flex:1; min-width:0; }
-      .ta-newpreset-remove { width:27px; height:27px; flex-shrink:0; border:1px solid #3A2222; background:rgba(239,68,68,.05); color:#EF4444; border-radius:6px; cursor:pointer; font-size:11px; }
-      .ta-newpreset-remove:hover { background:rgba(239,68,68,.12); }
-      .ta-newpreset-field-bottom { display:flex; gap:5px; margin-top:5px; padding-left:20px; }
-      .ta-newpreset-select { width:94px; flex-shrink:0; height:29px; background:#161B22; color:#C9D1D9; border:1px solid #2A313B; border-radius:6px; padding:5px 7px; font-size:8px; outline:none; }
-      .ta-field-value-input { flex:1; min-width:0; height:29px; }
-      .ta-newpreset-empty { padding:14px; text-align:center; color:#626D7C; border:1px dashed #2A313B; border-radius:8px; font-size:9px; }
-      .ta-newpreset-add { width:100%; margin-top:7px; padding:7px; border:1px dashed #394454; background:transparent; color:#F59E0B; border-radius:7px; cursor:pointer; font-size:9px; font-weight:800; }
-      .ta-newpreset-add:hover { background:rgba(245,158,11,.04); border-color:#F59E0B; }
-      .ta-newpreset-footer { display:flex; gap:7px; padding:9px 13px; border-top:1px solid #2A313B; background:#0D1117; flex-shrink:0; }
-      .ta-newpreset-cancel, .ta-newpreset-save { height:34px; border-radius:7px; cursor:pointer; font-size:10px; font-weight:800; transition:.15s; }
-      .ta-newpreset-cancel { flex:0 0 92px; background:#161B22; color:#9BA4B5; border:1px solid #2A313B; }
-      .ta-newpreset-cancel:hover { background:#1E242C; color:#E6EDF3; border-color:#465264; }
-      .ta-newpreset-save { flex:1; background:transparent; color:#F59E0B; border:1px solid #F59E0B; text-transform:uppercase; letter-spacing:.6px; }
-      .ta-newpreset-save:hover { background:#F59E0B; color:#0D1117; }
-      @media (max-width: 360px) {
-        .ta-newpreset-grid, .ta-newpreset-modes { grid-template-columns:1fr; }
-        .ta-newpreset-body { padding:10px; }
-        .ta-newpreset-footer { padding:8px 10px; }
-        .ta-newpreset-subtitle { display:none; }
-      }
-
-      .ta-confirm-icon { font-size: 30px; text-align: center; margin: 4px 0 2px; }
-      .ta-confirm-message { font-size: 12px; color: #9BA4B5; line-height: 1.5; text-align: center; }
-      .ta-confirm-cancel-btn { background: transparent; color: #9BA4B5; border: 1px solid #2A313B; border-radius: 8px; padding: 9px 16px; font-weight: 700; cursor: pointer; text-transform: uppercase; letter-spacing: 0.6px; font-size: 11px; transition: 0.15s; }
-      .ta-confirm-cancel-btn:hover { border-color: #9BA4B5; color: #E6EDF3; }
-      .ta-confirm-ok-danger { background: #EF4444 !important; color: #fff !important; border: 1px solid #EF4444 !important; }
-      .ta-confirm-ok-danger:hover { background: #dc2626 !important; }
-
-      /* -----------------------------------------------------------------
-         V 1.7 - AJUSTE VISUAL E MODAIS DE AVISO
-         ----------------------------------------------------------------- */
-
-      /* Texto do Novo Preset: maior e mais legível, mantendo o widget compacto. */
-      .ta-newpreset-title { font-size:14px !important; }
-      .ta-newpreset-subtitle { font-size:10px !important; }
-      .ta-newpreset-label { font-size:10px !important; margin-bottom:6px !important; }
-      .ta-newpreset-input { height:36px !important; padding:8px 10px !important; font-size:12px !important; }
-      .ta-newpreset-origin-legend { font-size:9px !important; line-height:1.45 !important; color:#7D8797 !important; }
-      .ta-newpreset-mode { min-height:48px !important; padding:9px 10px !important; }
-      .ta-newpreset-mode-icon { width:28px !important; height:28px !important; font-size:13px !important; }
-      .ta-newpreset-mode strong { font-size:11px !important; margin:0 !important; }
-      .ta-newpreset-status { font-size:10px !important; }
-      .ta-newpreset-help { font-size:9px !important; line-height:1.4 !important; }
-      .ta-newpreset-count { font-size:10px !important; }
-      .ta-newpreset-field { padding:8px !important; }
-      .ta-newpreset-order { width:17px !important; font-size:9px !important; }
-      .ta-field-label-input { font-size:12px !important; }
-      .ta-newpreset-remove { width:29px !important; height:29px !important; font-size:12px !important; }
-      .ta-newpreset-field-bottom { gap:6px !important; margin-top:6px !important; padding-left:22px !important; }
-      .ta-newpreset-select { width:102px !important; height:31px !important; font-size:10px !important; padding:5px 7px !important; }
-      .ta-field-value-input { height:31px !important; font-size:11px !important; }
-      .ta-newpreset-empty { font-size:10px !important; }
-      .ta-newpreset-add { padding:8px !important; font-size:10px !important; }
-      .ta-newpreset-cancel, .ta-newpreset-save {
-        height:36px !important;
-        font-size:11px !important;
-      }
-
-      /* Todos os avisos/confirmações ficam centralizados dentro do TicketAI. */
-      #ta-confirm-overlay {
-        align-items:center !important;
-        justify-content:center !important;
-        padding:16px !important;
-        background:rgba(13,17,23,.72) !important;
-      }
-
-      #ta-confirm-overlay .ta-modal {
-        width:min(300px, calc(100% - 20px)) !important;
-        max-width:300px !important;
-        height:auto !important;
-        max-height:calc(100% - 32px) !important;
-        min-height:0 !important;
-        padding:18px !important;
-        border:1px solid #2A313B !important;
-        border-radius:12px !important;
-        background:#0D1117 !important;
-        box-shadow:0 18px 45px rgba(0,0,0,.45) !important;
-        box-sizing:border-box !important;
-        overflow:auto !important;
-      }
-
-      #ta-confirm-overlay .ta-modal-title {
-        font-size:15px !important;
-        line-height:1.3 !important;
-        margin-bottom:7px !important;
-      }
-
-      #ta-confirm-overlay .ta-confirm-icon {
-        font-size:24px !important;
-        margin:0 0 7px !important;
-      }
-
-      #ta-confirm-overlay .ta-confirm-message {
-        font-size:12px !important;
-        line-height:1.5 !important;
-        color:#A8B1BF !important;
-        margin:0 auto !important;
-        max-width:260px !important;
-      }
-
-      #ta-confirm-overlay .ta-modal-actions {
-        display:flex !important;
-        justify-content:center !important;
-        gap:8px !important;
-        margin-top:16px !important;
-      }
-
-      #ta-confirm-overlay #ta-confirm-ok,
-      #ta-confirm-overlay #ta-confirm-cancel {
-        min-height:34px !important;
-        font-size:11px !important;
-        border-radius:7px !important;
-      }
-
-      #ta-confirm-overlay #ta-confirm-ok,
-      #ta-confirm-overlay #ta-confirm-cancel {
-        flex:1 !important;
-      }
-
-
-      .ta-newpreset-modes {
-        grid-template-columns:1fr !important;
-      }
-      .ta-newpreset-mode {
-        width:100% !important;
-        min-height:44px !important;
-        padding:8px 10px !important;
-      }
-      .ta-newpreset-origin-legend {
-        margin-top:5px !important;
-        margin-bottom:10px !important;
-        font-size:9px !important;
-        line-height:1.35 !important;
-        white-space:nowrap !important;
-        overflow:hidden !important;
-        text-overflow:ellipsis !important;
-      }
-      .ta-newpreset-fields-head {
-        align-items:center !important;
-        gap:8px !important;
-        margin-bottom:5px !important;
-      }
-      .ta-newpreset-fields-head h3,
-      .ta-newpreset-fields-title {
-        font-size:11px !important;
-        margin:0 !important;
-      }
-      .ta-newpreset-help {
-        font-size:9px !important;
-        line-height:1.25 !important;
-        margin:0 !important;
-        white-space:nowrap !important;
-        overflow:hidden !important;
-        text-overflow:ellipsis !important;
-      }
-      .ta-newpreset-count {
-        font-size:9px !important;
-        line-height:1 !important;
-        white-space:nowrap !important;
-        flex-shrink:0 !important;
-      }
-
-
-      /* V 1.7 - campos mais limpos e tipografia legível */
-      .ta-newpreset-section-label,
-      .ta-newpreset-label {
-        font-size:10px !important;
-        letter-spacing:.06em !important;
-        font-weight:700 !important;
-        color:#B8C2D1 !important;
-      }
-
-      .ta-newpreset-help,
-      .ta-newpreset-origin-legend,
-      .ta-newpreset-subtitle {
-        font-size:10px !important;
-        line-height:1.45 !important;
-        color:#7F8B9D !important;
-      }
-
-      .ta-newpreset-field {
-        padding:9px 10px !important;
-        border-radius:9px !important;
-      }
-
-      .ta-newpreset-field-top {
-        gap:7px !important;
-      }
-
-      .ta-field-label-input {
-        height:34px !important;
-        font-size:12px !important;
-        font-weight:600 !important;
-        color:#E6EDF3 !important;
-      }
-
-      .ta-newpreset-field-bottom {
-        margin-top:7px !important;
-        padding-left:22px !important;
-      }
-
-      .ta-field-value-input {
-        width:100% !important;
-        height:34px !important;
-        font-size:12px !important;
-        color:#D8DEE9 !important;
-        padding:7px 10px !important;
-      }
-
-      .ta-field-value-input::placeholder {
-        color:#667085 !important;
-      }
-
-      .ta-newpreset-remove {
-        width:31px !important;
-        height:31px !important;
-        min-width:31px !important;
-        padding:0 !important;
-        border:1px solid #3A2529 !important;
-        border-radius:7px !important;
-        background:#17191E !important;
-        color:#E25555 !important;
-        display:flex !important;
-        align-items:center !important;
-        justify-content:center !important;
-        font-size:20px !important;
-        font-weight:400 !important;
-        line-height:1 !important;
-        transition:all .15s ease !important;
-      }
-
-      .ta-newpreset-remove:hover {
-        background:#28191C !important;
-        border-color:#8F343A !important;
-        color:#FF6B6B !important;
-      }
-
-      .ta-newpreset-remove span {
-        transform:translateY(-1px);
-      }
-
-      .ta-newpreset-count {
-        font-size:9px !important;
-        font-weight:700 !important;
-        letter-spacing:0 !important;
-      }
-
-      .ta-newpreset-footer button {
-        font-size:11px !important;
-        font-weight:700 !important;
-        letter-spacing:.01em !important;
-      }
-
-
-      /* V 1.7 - PROTÓTIPO 2: DESTAQUE ESTRUTURADO */
-      .ta-newpreset-section {
-        margin:0 0 14px;
-      }
-      .ta-newpreset-section-title {
-        display:flex;
-        align-items:center;
-        gap:7px;
-        margin-bottom:8px;
-        color:#E6EDF3;
-      }
-      .ta-newpreset-section-title > span {
-        width:19px;
-        height:19px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        border:1px solid #F59E0B;
-        border-radius:50%;
-        color:#F59E0B;
-        font-size:9px;
-        font-weight:800;
-        flex-shrink:0;
-      }
-      .ta-newpreset-section-title strong {
-        font-size:11px;
-        text-transform:uppercase;
-        letter-spacing:.5px;
-      }
-      .ta-newpreset-grid {
-        grid-template-columns:1fr 1fr !important;
-        gap:8px !important;
-      }
-      .ta-newpreset-label {
-        font-size:10px !important;
-        margin-bottom:5px !important;
-      }
-      .ta-newpreset-input {
-        height:36px !important;
-        font-size:12px !important;
-        padding:8px 10px !important;
-      }
-      .ta-newpreset-mode {
-        width:100% !important;
-        min-height:58px !important;
-        padding:10px !important;
-        border-radius:8px !important;
-      }
-      .ta-newpreset-mode-icon {
-        width:31px !important;
-        height:31px !important;
-        font-size:15px !important;
-      }
-      .ta-newpreset-mode strong {
-        font-size:11px !important;
-      }
-      .ta-newpreset-mode small {
-        display:block !important;
-        margin-top:3px !important;
-        font-size:9px !important;
-        line-height:1.35 !important;
-        color:#7D8797 !important;
-      }
-      .ta-newpreset-origin-legend {
-        margin-top:6px !important;
-        font-size:9px !important;
-        line-height:1.4 !important;
-      }
-      .ta-newpreset-section-head {
-        align-items:center !important;
-        margin-top:0 !important;
-      }
-      .ta-newpreset-section-head .ta-newpreset-section-title {
-        margin-bottom:0 !important;
-      }
-      .ta-newpreset-help {
-        margin-top:0 !important;
-        font-size:9px !important;
-        line-height:1.35 !important;
-      }
-      .ta-newpreset-count {
-        font-size:9px !important;
-        white-space:nowrap !important;
-      }
-      .ta-newpreset-fields {
-        gap:6px !important;
-        margin-top:7px !important;
-      }
-      .ta-newpreset-field {
-        padding:8px 9px !important;
-        border-radius:8px !important;
-      }
-      .ta-newpreset-field-top {
-        min-height:31px !important;
-        gap:7px !important;
-      }
-      .ta-newpreset-order {
-        width:18px !important;
-        font-size:9px !important;
-      }
-      .ta-field-label-input {
-        flex:1;
-        min-width:0;
-        color:#E6EDF3;
-        font-size:12px;
-        font-weight:700;
-        line-height:1.25;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        white-space:nowrap;
-      }
-      .ta-newpreset-field-bottom {
-        margin-top:6px !important;
-        padding-left:25px !important;
-      }
-      .ta-field-value-input {
-        width:100% !important;
-        height:34px !important;
-        font-size:12px !important;
-      }
-      .ta-newpreset-remove {
-        width:31px !important;
-        height:31px !important;
-        border-radius:7px !important;
-        background:rgba(239,68,68,.04) !important;
-        border:1px solid #3A2529 !important;
-        color:#EF4444 !important;
-        font-size:19px !important;
-      }
-      .ta-newpreset-remove:hover {
-        background:rgba(239,68,68,.12) !important;
-        border-color:#7F3438 !important;
-      }
-      .ta-newpreset-add {
-        margin-top:8px !important;
-        height:34px !important;
-        padding:0 10px !important;
-        font-size:10px !important;
-      }
-      .ta-newpreset-status {
-        font-size:10px !important;
-        min-height:14px !important;
-      }
-      .ta-newpreset-footer {
-        padding:10px 13px !important;
-      }
-      .ta-newpreset-cancel,
-      .ta-newpreset-save {
-        height:36px !important;
-        font-size:11px !important;
-      }
-      @media (max-width:360px) {
-        .ta-newpreset-grid { grid-template-columns:1fr !important; }
-      }
-
+      #ticketai-widget{--ta-accent:#f5b544;--ta-bg:#101318;--ta-surface:#191e26;--ta-border:#303845;--ta-text:#edf0f5;--ta-muted:#a1adbd;position:fixed;top:20px;right:20px;width:440px;height:670px;min-width:296px;min-height:350px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px);display:flex;flex-direction:column;background:var(--ta-bg);color:var(--ta-text);border:1px solid var(--ta-border);border-radius:18px;box-shadow:0 12px 35px #0003;z-index:2147483647;overflow:hidden;font:14px/1.45 Inter,system-ui,sans-serif;color-scheme:dark;container-type:inline-size}
+      #ticketai-widget,#ticketai-widget *,#ticketai-widget *::before,#ticketai-widget *::after{box-sizing:border-box}
+      #ticketai-widget button,#ticketai-widget input,#ticketai-widget select,#ticketai-widget textarea{font:inherit}
+      #ticketai-widget button{cursor:pointer;color:inherit}
+      #ticketai-widget :is(button,input,select,textarea,a,summary):focus-visible{outline:2px solid var(--ta-accent);outline-offset:3px}
+      #ticketai-widget button:disabled{opacity:.45;cursor:default}
+      #ticketai-widget [hidden]{display:none!important}
+      #ticketai-widget .ta-svg{width:18px;height:18px;flex-shrink:0;pointer-events:none;display:block}
+      #ticketai-widget .ta-header{height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 15px;border-bottom:1px solid var(--ta-border);cursor:grab}
+      #ticketai-widget .ta-title{display:flex;align-items:center;gap:7px;pointer-events:none}
+      #ticketai-widget .ta-brand-mark{color:var(--ta-accent);display:flex}
+      #ticketai-widget .ta-title strong{font-size:16px;font-weight:600}
+      #ticketai-widget .ta-title-ai{color:var(--ta-accent)}
+      #ticketai-widget .ta-btn-group{display:flex;gap:0}
+      #ticketai-widget .ta-icon,#ticketai-widget .ta-h-btn{width:36px;height:36px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:8px;padding:0}
+      #ticketai-widget .ta-btn-group .ta-icon{width:31px;height:34px}
+      #ticketai-widget .ta-icon:hover{background:var(--ta-surface);border-color:var(--ta-border)}
+      #ticketai-widget .ta-body,#ticketai-widget .ta-secondary-view{flex:1;min-height:0;display:flex;flex-direction:column}
+      #ticketai-widget .ta-search-area{padding:13px 16px 9px;flex-shrink:0}
+      #ticketai-widget .ta-search-row{display:flex;gap:7px;align-items:center}
+      #ticketai-widget .ta-search{flex:1;min-width:0;display:flex;align-items:center;gap:9px;border:1px solid var(--ta-border);border-radius:9px;padding:0 12px;background:#141920;color:var(--ta-muted)}
+      #ticketai-widget .ta-search:focus-within{border-color:var(--ta-accent)}
+      #ticketai-widget .ta-search-input{background:transparent;color:var(--ta-text);border:0;min-width:0;width:100%;padding:11px 0;outline:none}
+      #ticketai-widget .ta-search-input:focus,#ticketai-widget .ta-search-input:focus-visible{outline:none;box-shadow:none}
+      #ticketai-widget .ta-search-input::-webkit-search-cancel-button{display:none}
+      #ticketai-widget .ta-search-clear{flex-shrink:0;width:24px;height:24px;padding:3px;border:0;border-radius:5px;background:transparent;color:var(--ta-muted);display:flex;align-items:center;justify-content:center}
+      #ticketai-widget .ta-search-clear:hover{background:var(--ta-surface);color:var(--ta-text)}
+      #ticketai-widget input::placeholder{color:var(--ta-muted)}
+      #ticketai-widget .ta-organize-groups{border:1px solid var(--ta-border);background:var(--ta-surface);height:42px;width:42px}
+      #ticketai-widget .ta-list-meta{display:flex;justify-content:space-between;align-items:center;color:var(--ta-muted);font-size:12px;margin-top:11px;gap:8px}
+      #ticketai-widget #ta-list,#ticketai-widget .ta-view-scroll{overflow-y:auto;min-height:0;flex:1;padding:0 16px 18px;scrollbar-width:thin;scrollbar-color:var(--ta-border) transparent}
+      #ticketai-widget .ta-group-label{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ta-muted);margin:17px 0 8px;display:flex;gap:7px;align-items:center}
+      #ticketai-widget .ta-group-label:first-child{margin-top:6px}
+      #ticketai-widget .ta-group-label span{letter-spacing:0;opacity:.7}
+      #ticketai-widget .ta-preset-card{position:relative;border:1px solid var(--ta-border);border-radius:10px;background:var(--ta-surface);margin-bottom:7px;padding:0 6px 0 0}
+      #ticketai-widget .ta-card-header-row{display:flex;align-items:center;gap:4px}
+      #ticketai-widget .ta-apply-preset{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;flex:1;min-width:0;padding:12px;background:none;border:0;border-radius:9px}
+      #ticketai-widget .ta-apply-preset:hover{background:#ffffff06}
+      #ticketai-widget .ta-preset-name{font-weight:500;overflow-wrap:anywhere;min-width:0}
+      #ticketai-widget .ta-apply-hint{color:var(--ta-accent);display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:22px;flex-shrink:0;font-size:12px;white-space:nowrap}
+      #ticketai-widget .ta-apply-hint .ta-svg{width:15px;height:15px}
+      #ticketai-widget .ta-more{width:36px;height:36px;background:none;color:var(--ta-text);border:1px solid transparent;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0}
+      #ticketai-widget .ta-more:hover{background:#ffffff06;border-color:var(--ta-border)}
+      #ticketai-widget .ta-preset-actions{position:absolute;width:180px;padding:5px;background:#242c37;border:1px solid #455163;border-radius:10px;box-shadow:0 10px 30px #0006;z-index:25}
+      #ticketai-widget .ta-preset-actions button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;border-radius:6px;text-align:left;padding:10px}
+      #ticketai-widget .ta-preset-actions button:hover{background:#ffffff0a}
+      #ticketai-widget .ta-danger{color:#ffada6!important}
+      #ticketai-widget .ta-preset-checkbox-wrap{display:none;padding-left:13px}
+      #ticketai-widget .select-mode-active .ta-preset-checkbox-wrap{display:flex}
+      #ticketai-widget .select-mode-active .ta-more,#ticketai-widget .select-mode-active .ta-apply-hint{display:none}
+      #ticketai-widget .ta-preset-card.is-selected{border-color:var(--ta-accent);background:#2d281e}
+      #ticketai-widget input[type=checkbox]{accent-color:var(--ta-accent);width:16px;height:16px;margin:0 6px 0 0;flex-shrink:0}
+      #ticketai-widget .ta-selection-toolbar{display:none;margin:0 16px 10px;padding:9px;border:1px solid #67532e;background:#2a251b;border-radius:8px;align-items:center;justify-content:space-between;gap:7px;flex-wrap:wrap;font-size:12px}
+      #ticketai-widget .ta-selection-toolbar.is-visible{display:flex}
+      #ticketai-widget .ta-selection-actions{display:flex;gap:5px;flex-wrap:wrap}
+      #ticketai-widget .ta-selection-actions button{border:1px solid var(--ta-border);border-radius:6px;background:var(--ta-surface);padding:6px 8px;font-size:12px}
+      #ticketai-widget .ta-footer{flex-shrink:0;border-top:1px solid var(--ta-border);padding:7px 16px 6px;background:var(--ta-bg)}
+      #ticketai-widget .ta-footer-row{display:flex;gap:8px}
+      #ticketai-widget .ta-primary,#ticketai-widget .ta-btn-add,#ticketai-widget .ta-newpreset-save{background:var(--ta-accent);color:#17130b;border:1px solid var(--ta-accent);border-radius:8px;padding:10px 14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:500}
+      #ticketai-widget .ta-secondary,#ticketai-widget .ta-newpreset-cancel{background:var(--ta-surface);border:1px solid var(--ta-border);border-radius:8px;padding:10px 14px;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+      #ticketai-widget .ta-footer-row .ta-primary,#ticketai-widget .ta-btn-add,#ticketai-widget .ta-newpreset-save{flex:1}
+      #ticketai-widget .ta-dev-footer{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;margin-top:4px;padding-top:0;text-align:center;color:var(--ta-muted);font-size:11px}
+      #ticketai-widget .ta-dev-signature{white-space:nowrap;line-height:14px;color:#8c98a9}
+      #ticketai-widget .ta-dev-signature a{font-size:11px;line-height:14px;letter-spacing:0;font-weight:400;color:#aeb9c8;text-decoration:none}
+      #ticketai-widget .ta-dev-signature a:hover{color:var(--ta-accent);text-decoration:underline;text-underline-offset:3px}
+      #ticketai-widget .ta-version{font-size:11px;line-height:13px;color:#8c98a9}
+      #ticketai-widget .ta-view-heading,#ticketai-widget .ta-newpreset-header{padding:16px 18px 12px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--ta-border);flex-shrink:0}
+      #ticketai-widget .ta-view-heading h2,#ticketai-widget .ta-newpreset-title{font-size:16px;margin:0;font-weight:500}
+      #ticketai-widget .ta-view-heading p,#ticketai-widget .ta-newpreset-subtitle{font-size:12px;color:var(--ta-muted);margin:2px 0 0}
+      #ticketai-widget .ta-settings{padding:18px;display:flex;flex-direction:column;gap:18px}
+      #ticketai-widget .ta-action-list{display:flex;flex-direction:column;gap:6px}
+      #ticketai-widget .ta-action-list>button{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--ta-border);border-radius:9px;background:var(--ta-surface);text-align:left}
+      #ticketai-widget .ta-action-list>button>span{flex:1}
+      #ticketai-widget .ta-action-list small{display:block;font-size:11px;color:var(--ta-muted);margin-top:2px}
+      #ticketai-widget .ta-group-order{display:flex;align-items:center;gap:8px;padding:12px 8px;margin:7px 0;border:1px solid var(--ta-border);border-radius:9px;background:var(--ta-surface)}
+      #ticketai-widget .ta-grip{color:var(--ta-muted);cursor:grab;display:flex;padding:4px}
+      #ticketai-widget .ta-group-name{flex:1;min-width:0;overflow-wrap:anywhere}
+      #ticketai-widget .ta-group-name small{display:block;color:var(--ta-muted);font-size:11px}
+      #ticketai-widget .ta-group-order.is-dragging{opacity:.45}
+      #ticketai-widget .ta-group-order.is-drag-over{border-color:var(--ta-accent);box-shadow:0 -3px var(--ta-accent)}
+      #ticketai-widget .ta-modal-overlay{position:absolute;inset:44px 0 0;display:none;z-index:30;min-height:0;padding:0;background:var(--ta-bg);border:0;border-radius:0}
+      #ticketai-widget .ta-modal-overlay.is-visible{display:flex}
+      #ticketai-widget .ta-modal{width:100%;height:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--ta-bg);color:var(--ta-text)}
+      #ticketai-widget .ta-newpreset-body{padding:16px;overflow:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:var(--ta-border) transparent}
+      #ticketai-widget .ta-newpreset-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      #ticketai-widget .ta-newpreset-main-field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--ta-muted);min-width:0}
+      #ticketai-widget .ta-newpreset-body input:not([type=checkbox]),#ticketai-widget .ta-newpreset-body textarea,#ticketai-widget .ta-backup-input{background:#141920;color:var(--ta-text);border:1px solid var(--ta-border);border-radius:7px;width:100%;padding:10px;min-width:0}
+      #ticketai-widget .ta-newpreset-body textarea{resize:vertical;min-height:58px}
+      #ticketai-widget .ta-newpreset-section-title{font-size:13px;font-weight:500;margin:0 0 9px}
+      #ticketai-widget .ta-newpreset-section-title strong{font-weight:500}
+      #ticketai-widget .ta-newpreset-help,#ticketai-widget .ta-newpreset-status{font-size:12px;color:var(--ta-muted);margin:7px 0 0}
+      #ticketai-widget .ta-newpreset-status:empty{display:none}
+      #ticketai-widget .ta-newpreset-status.error{color:#ffada6}
+      #ticketai-widget .ta-newpreset-status.success{color:#7ddbb0}
+      #ticketai-widget .ta-newpreset-mode{width:100%;justify-content:flex-start;text-align:left}
+      #ticketai-widget .ta-workflow-options{border-block:1px solid var(--ta-border);padding:12px 0}
+      #ticketai-widget .ta-workflow-options summary{cursor:pointer;font-size:13px}
+      #ticketai-widget .ta-demo-label{font-size:11px;border:1px solid var(--ta-border);padding:3px 7px;border-radius:5px;color:var(--ta-muted);margin-left:5px}
+      #ticketai-widget .ta-workflow-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+      #ticketai-widget .ta-workflow-entry{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--ta-muted)}
+      #ticketai-widget .ta-workflow-entry label{display:flex;align-items:center;gap:2px}
+      #ticketai-widget .ta-newpreset-section-head,#ticketai-widget .ta-newpreset-field-top{display:flex;align-items:center;justify-content:space-between;gap:4px}
+      #ticketai-widget .ta-newpreset-count{font-size:11px;color:var(--ta-muted)}
+      #ticketai-widget .ta-newpreset-field{margin-top:11px}
+      #ticketai-widget .ta-newpreset-field-top{margin-bottom:5px;font-size:12px}
+      #ticketai-widget .ta-newpreset-field.is-disabled{opacity:.55}
+      #ticketai-widget .ta-newpreset-field-top .ta-field-label-input{background:transparent!important;padding:4px 6px!important;border-color:transparent!important;font-weight:500;flex:1;font-size:13px!important}
+      #ticketai-widget .ta-field-label-input:hover,#ticketai-widget .ta-field-label-input:focus{border-color:var(--ta-border)!important}
+      #ticketai-widget .ta-newpreset-remove{width:28px;height:28px;color:var(--ta-muted)}
+      #ticketai-widget .ta-newpreset-add,#ticketai-widget .ta-link{background:none;border:0;color:var(--ta-accent);display:flex;gap:7px;align-items:center;padding:10px 0}
+      #ticketai-widget .ta-newpreset-order{display:none}
+      #ticketai-widget .ta-group-picker{position:relative}
+      #ticketai-widget .ta-group-suggestions{position:absolute;left:0;right:0;top:calc(100% + 4px);background:#242c37;border:1px solid #455163;border-radius:8px;padding:5px;z-index:2;max-height:150px;overflow:auto}
+      #ticketai-widget .ta-group-suggestion{display:block;width:100%;padding:8px;background:none;border:0;text-align:left;border-radius:5px}
+      #ticketai-widget .ta-group-suggestion:hover{background:#ffffff09}
+      #ticketai-widget #ta-confirm-overlay{padding:15px;align-items:center;justify-content:center;background:#080b11b8;backdrop-filter:blur(3px)}
+      #ticketai-widget #ta-confirm-overlay .ta-modal{background:#202733;border:1px solid #445063;border-radius:13px;padding:18px;width:100%;height:auto;max-height:100%;overflow:auto;display:block;box-shadow:0 15px 40px #0005}
+      #ticketai-widget .ta-confirm-title{font-size:16px;margin:0 0 9px;font-weight:500}
+      #ticketai-widget .ta-confirm-message{font-size:13px;color:var(--ta-muted);margin:0 0 15px}
+      #ticketai-widget .ta-modal-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:17px}
+      #ticketai-widget .ta-modal-actions .ta-primary{flex:0 0 auto}
+      #ticketai-widget .ta-confirm-ok-danger{background:var(--ta-surface);border-color:var(--ta-border);color:#ffada6}
+      #ticketai-widget .ta-help-content dl{margin:0;font-size:12px}
+      #ticketai-widget .ta-help-content dt{color:var(--ta-accent);margin-top:10px}
+      #ticketai-widget .ta-help-content dd{margin:3px 0;color:var(--ta-muted)}
+      #ticketai-widget .ta-backup-input{min-height:180px;resize:vertical;font:11px/1.45 ui-monospace,monospace}
+      #ticketai-widget .ta-backup-label{font-size:12px;color:var(--ta-muted);display:flex;flex-direction:column;gap:7px}
+      #ticketai-widget .ta-backup-label input[type=file]{width:100%;font-size:12px}
+      #ticketai-widget .ta-backup-error{font-size:12px;color:#ffada6;margin:0}
+      #ticketai-widget .ta-field-results,#ticketai-widget .ta-field-summary,#ticketai-widget .ta-progress-bar{display:none}
+      #ticketai-widget .ta-preset-card[data-confirmation=running] .ta-apply-hint{color:var(--ta-muted)}
+      #ticketai-widget .ta-preset-card[data-confirmation=success]{background:#16251d;border-color:color-mix(in srgb,#88d4ac 38%,var(--ta-border))}
+      #ticketai-widget .ta-preset-card[data-confirmation=success] .ta-apply-hint{color:#88d4ac}
+      #ticketai-widget .ta-preset-card[data-confirmation=partial]{background:#2a251b;border-color:color-mix(in srgb,var(--ta-accent) 48%,var(--ta-border))}
+      #ticketai-widget .ta-preset-card[data-confirmation=running] .ta-apply-preset:disabled{opacity:1}
+      #ticketai-widget .ta-confirm-spinner{height:12px;width:12px;border:1.5px solid var(--ta-border);border-top-color:var(--ta-muted);border-radius:50%;animation:ta-confirm-spin .8s linear infinite}
+      @keyframes ta-confirm-spin{to{transform:rotate(360deg)}}
+      #ticketai-widget .ta-confirm-details{padding:8px 12px 10px;border-top:1px solid var(--ta-border);font-size:12px}
+      #ticketai-widget .ta-confirm-count{font-weight:500;margin-bottom:7px}
+      #ticketai-widget .ta-confirm-pending{white-space:pre-line;overflow-wrap:anywhere;color:var(--ta-accent)}
+      #ticketai-widget .ta-confirm-actions{display:flex;gap:16px;margin-top:8px}
+      #ticketai-widget .ta-confirm-actions button{background:transparent;border:0;border-radius:4px;padding:4px 0;font-size:12px;color:var(--ta-accent)}
+      #ticketai-widget .ta-confirm-actions .ta-confirm-dismiss{color:var(--ta-muted)}
+      #ticketai-widget .ta-undo-toast{display:none;margin:0 16px 10px;padding:10px 12px;border-left:3px solid var(--ta-accent);border-radius:7px;background:#302719;font-size:12px;align-items:center;justify-content:space-between;gap:8px}
+      #ticketai-widget .ta-undo-toast.is-visible{display:flex}
+      #ticketai-widget .ta-undo-toast button{color:var(--ta-accent);border:0;background:none;font-size:12px;padding:3px}
+      #ticketai-widget .ta-empty-state{padding:36px 10px;text-align:center;color:var(--ta-muted)}
+      #ticketai-widget .ta-empty-sub{font-size:12px;margin-top:5px}
+      #ticketai-widget .ta-empty-icon{display:none}
+      #ticketai-widget .ta-highlight{background:#57431e;color:#ffe2a2;border-radius:2px}
+      #ticketai-widget .ta-compact-nav{display:none;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--ta-muted);padding:2px 10px}
+      #ticketai-widget .ta-compact-nav button{background:none;border:0;color:inherit;width:29px;height:29px;padding:5px;display:flex}
+      #ticketai-widget.is-peek{width:320px!important;height:auto!important;min-height:0!important}
+      #ticketai-widget.is-peek .ta-search-area,#ticketai-widget.is-peek .ta-selection-toolbar,#ticketai-widget.is-peek .ta-footer{display:none}
+      #ticketai-widget.is-peek .ta-compact-nav{display:flex}
+      #ticketai-widget.is-peek .ta-body{flex:0 1 auto}
+      #ticketai-widget.is-peek #ta-list{flex:0 1 auto;padding:2px 10px 4px}
+      #ticketai-widget.is-peek .ta-apply-preset{padding:8px 10px;gap:8px}
+      #ticketai-widget.is-peek .ta-preset-card{margin-bottom:3px}
+      #ticketai-widget.is-peek .ta-apply-hint{font-size:12px}
+      #ticketai-widget.is-peek:has(>.ta-preset-actions:not([hidden])){min-height:178px!important}
+      #ticketai-widget.is-minimized{height:44px!important;min-height:44px!important}
+      #ticketai-widget.is-minimized .ta-body,#ticketai-widget.is-minimized .ta-secondary-view,#ticketai-widget.is-minimized .ta-modal-overlay,#ticketai-widget.is-minimized .ta-resizer-corner{display:none}
+      #ticketai-widget .ta-resizer{position:absolute;top:0;width:5px;height:100%;cursor:ew-resize;z-index:40}
+      #ticketai-widget .ta-resizer-left{left:0}#ticketai-widget .ta-resizer-right{right:0}
+      #ticketai-widget .ta-resizer-vertical{position:absolute;left:0;width:100%;height:5px;cursor:ns-resize;z-index:40}
+      #ticketai-widget .ta-resizer-top{top:0}#ticketai-widget .ta-resizer-bottom{bottom:0}
+      #ticketai-widget .ta-resizer-corner{position:absolute;right:1px;bottom:1px;border:0;background:transparent;color:transparent;padding:0;width:12px;height:12px;cursor:nwse-resize;z-index:41}
+      #ticketai-widget .ta-resizer-corner .ta-svg{width:13px;height:13px}
+      @container(max-width:360px){#ticketai-widget .ta-newpreset-grid,#ticketai-widget .ta-workflow-grid{grid-template-columns:1fr}#ticketai-widget .ta-meta-hint{display:none}#ticketai-widget .ta-btn-group .ta-icon{width:29px}}
+      @media(prefers-reduced-motion:reduce){#ticketai-widget *,#ticketai-widget *::before{transition:none!important;animation:none!important}}
     `;
     document.head.appendChild(style);
   }
-
-  // ---------------------------------------------------------------------
-  // DOM DO WIDGET
-  // ---------------------------------------------------------------------
 
   function buildWidgetDom() {
     const widget = document.createElement('div');
     widget.id = 'ticketai-widget';
     widget.innerHTML = `
-      <div class="ta-resizer ta-resizer-left" id="ta-res-l"></div>
-      <div class="ta-resizer ta-resizer-right" id="ta-res-r"></div>
-      <div class="ta-resizer-vertical ta-resizer-top" id="ta-res-t"></div>
-      <div class="ta-resizer-vertical ta-resizer-bottom" id="ta-res-b"></div>
-      <div class="ta-header" id="ta-drag-h">
-        <span class="ta-title"><span class="ta-title-ticket">Ticket</span><span class="ta-title-ai">AI</span></span>
-        <div class="ta-btn-group">
-          <div class="ta-h-btn ta-help-wrap" style="position:relative;">
-            <span id="ta-btn-help" title="Atalhos de teclado">?</span>
-            <div class="ta-help-popover" id="ta-help-popover">
-              <div class="ta-help-title">Atalhos de teclado</div>
-              <div class="ta-help-row"><span class="ta-help-key">Alt + Q</span><span>Abrir / minimizar / maximizar</span></div>
-              <div class="ta-help-row"><span class="ta-help-key">Alt + W</span><span>Modo compacto</span></div>
-              <div class="ta-help-row"><span class="ta-help-key">Esc</span><span>Fechar menus e modais</span></div>
-            </div>
-          </div>
-          <div class="ta-h-btn" id="ta-btn-min" title="Minimizar">–</div>
-          <div class="ta-h-btn" id="ta-btn-close" title="Fechar">✕</div>
-        </div>
-      </div>
+      <div class="ta-resizer ta-resizer-left" id="ta-res-l"></div><div class="ta-resizer ta-resizer-right" id="ta-res-r"></div><div class="ta-resizer-vertical ta-resizer-top" id="ta-res-t"></div><div class="ta-resizer-vertical ta-resizer-bottom" id="ta-res-b"></div>
+      <header class="ta-header" id="ta-drag-h"><div class="ta-title"><strong>Ticket<span class="ta-title-ai">AI</span></strong></div><div class="ta-btn-group">
+        <button type="button" class="ta-icon" id="ta-btn-help" aria-label="Ajuda e atalhos" title="Ajuda e atalhos">${uiIcon('help')}</button>
+        <button type="button" class="ta-icon" id="ta-btn-peek" aria-label="Alternar modo compacto" title="Modo compacto · Alt+W">${uiIcon('compact')}</button>
+        <button type="button" class="ta-icon" id="ta-btn-min" aria-label="Minimizar ou expandir" title="Minimizar · Alt+Q">${uiIcon('minus')}</button>
+        <button type="button" class="ta-icon" id="ta-btn-close" aria-label="Fechar widget" title="Fechar">${uiIcon('close')}</button>
+      </div></header>
       <div class="ta-body" id="ta-body">
-        <div class="ta-undo-toast" id="ta-undo-toast">
-          <span id="ta-undo-toast-text">Preset apagado</span>
-          <button id="ta-undo-toast-btn" type="button">Desfazer</button>
-        </div>
-        <div class="ta-selection-toolbar" id="ta-selection-toolbar">
-          <span id="ta-selection-count">0 selecionados</span>
-          <div class="ta-selection-actions">
-            <button id="ta-btn-select-all" type="button">Selecionar Tudo</button>
-            <button id="ta-btn-selection-delete" type="button" class="ta-danger-inline">Apagar</button>
-            <button id="ta-btn-selection-cancel" type="button">Cancelar</button>
-          </div>
-        </div>
-        <div class="ta-search-row" id="ta-search-row">
-          <input type="text" id="ta-search-input" class="ta-search-input" placeholder="Buscar preset...">
-          <button id="ta-btn-organize-groups" class="ta-organize-groups" type="button" title="Organizar grupos">☷</button>
-        </div>
+        <div class="ta-search-area"><div class="ta-search-row"><div class="ta-search">${uiIcon('search')}<input type="search" id="ta-search-input" class="ta-search-input" aria-label="Buscar preset ou grupo" placeholder="Buscar preset ou grupo"><button type="button" id="ta-search-clear" class="ta-search-clear" aria-label="Limpar busca" title="Limpar busca" hidden>${uiIcon('close')}</button></div><button id="ta-btn-organize-groups" class="ta-icon ta-organize-groups" type="button" aria-label="Organizar grupos" title="Organizar grupos">${uiIcon('groups')}</button></div><div class="ta-list-meta"><span id="ta-preset-count"></span><span class="ta-meta-hint">Aplicação com um clique</span></div></div>
+        <div class="ta-undo-toast" id="ta-undo-toast"><span id="ta-undo-toast-text"></span><button id="ta-undo-toast-btn" type="button">Desfazer</button></div>
+        <div class="ta-selection-toolbar" id="ta-selection-toolbar"><span id="ta-selection-count">0 selecionados</span><div class="ta-selection-actions"><button id="ta-btn-select-all" type="button">Selecionar tudo</button><button id="ta-btn-selection-delete" type="button" class="ta-danger">Apagar</button><button id="ta-btn-selection-cancel" type="button">Cancelar</button></div></div>
+        <div class="ta-compact-nav"><button type="button" id="ta-peek-prev" aria-label="Preset anterior">${uiIcon('left')}</button><span id="ta-peek-position"></span><button type="button" id="ta-peek-next" aria-label="Próximo preset">${uiIcon('right')}</button></div>
         <div id="ta-list"></div>
+        ${viewFooter(`<button id="ta-btn-add" class="ta-btn-add" type="button">${uiIcon('plus')}Novo preset</button><button id="ta-btn-gear" class="ta-secondary" type="button" aria-label="Opções">${uiIcon('settings')}</button>`)}
       </div>
-      <div class="ta-footer">
-        <div class="ta-footer-row">
-          <div style="display:flex; gap:6px; flex:1;">
-            <button id="ta-btn-add" class="ta-btn-add" title="Novo preset" type="button"><span>+</span>Novo Preset</button>
-            
-          </div>
-          <div class="ta-gear-wrap">
-            <button id="ta-btn-gear" class="ta-btn-gear" title="Opções" type="button">⚙</button>
-            <div class="ta-popover" id="ta-popover">
-              <div class="ta-popover-header">
-                <span class="ta-popover-header-icon">⚙</span>
-                <span class="ta-popover-header-title">Configurações</span>
-                <span class="ta-popover-close" id="ta-popover-close" title="Fechar">✕</span>
-              </div>
-              <button id="ta-btn-select-mode" class="ta-popover-item ta-popover-accent-amber" type="button" title="Selecionar vários presets para apagar de uma vez">
-                <span class="ta-popover-item-icon ta-icon-amber">☑</span>
-                <span class="ta-popover-item-text">Selecionar preset</span>
-                <span class="ta-popover-chevron">›</span>
-              </button>
-              <button id="ta-btn-export" class="ta-popover-item" type="button" title="Baixar todos os presets em um arquivo JSON">
-                <span class="ta-popover-item-icon ta-icon-amber">↑</span>
-                <span class="ta-popover-item-text">Exportar</span>
-                <span class="ta-popover-chevron">›</span>
-              </button>
-              <button id="ta-btn-import" class="ta-popover-item" type="button" title="Importar presets de um arquivo JSON">
-                <span class="ta-popover-item-icon ta-icon-blue">↓</span>
-                <span class="ta-popover-item-text">Importar</span>
-                <span class="ta-popover-chevron">›</span>
-              </button>
-              <button id="ta-btn-delete-all" class="ta-popover-item ta-popover-accent-danger" type="button" title="Apagar todos os presets cadastrados">
-                <span class="ta-popover-item-icon ta-icon-danger">🗑</span>
-                <span class="ta-popover-item-text ta-text-danger">Apagar todos</span>
-                <span class="ta-popover-chevron">›</span>
-              </button>
-              <input type="file" id="ta-import-file" style="display:none" accept=".json">
-            </div>
-          </div>
-        </div>
-        <div class="ta-preset-count" id="ta-preset-count"></div>
-        <div class="ta-dev-footer">
-          <span class="ta-dev-label">Desenvolvido por</span>
-          <span class="ta-dev-name">Lagamba Tech</span>
-          <span class="ta-version">V ${TICKETAI_VERSION}</span>
-        </div>
-      </div>
-
-      <div class="ta-modal-overlay" id="ta-modal-overlay">
-        <div class="ta-modal">
-          <div class="ta-modal-header-row">
-            <div class="ta-modal-title" id="ta-modal-title">Novo preset</div>
-            <span class="ta-modal-close" id="ta-modal-close" title="Fechar">✕</span>
-          </div>
-          <div>
-            <div class="ta-field-label">Nome do preset</div>
-            <input type="text" id="ta-field-name" class="ta-field-input" placeholder="Ex: Retransmissão de pacote">
-          </div>
-          <div>
-            <div class="ta-field-label">Grupo</div>
-            <input type="text" id="ta-field-group" class="ta-field-input" placeholder="Ex: Integração">
-          </div>
-          <div>
-            <div class="ta-field-label">Descrição do ticket</div>
-            <input type="text" id="ta-field-descricao" class="ta-field-input" placeholder="Texto sugerido">
-          </div>
-          <div>
-            <div class="ta-field-label">Produto</div>
-            <input type="text" id="ta-field-produto" class="ta-field-input" placeholder="Ex: Cilia Web">
-          </div>
-          <div>
-            <div class="ta-field-label">Categoria</div>
-            <input type="text" id="ta-field-categoria" class="ta-field-input" placeholder="Ex: Problema">
-          </div>
-          <div>
-            <div class="ta-field-label">Assunto</div>
-            <input type="text" id="ta-field-assunto" class="ta-field-input" placeholder="Ex: Retransmissão de orçamento">
-          </div>
-          <div class="ta-modal-actions">
-            <button id="ta-modal-save" class="ta-btn-add" style="flex:1;">Salvar</button>
-          </div>
-          <div id="ta-modal-cancel" class="ta-cancel-link">Cancelar</div>
-        </div>
-      </div>
-
-      <div class="ta-modal-overlay" id="ta-confirm-overlay">
-        <div class="ta-modal" style="max-width: 260px;">
-          <div class="ta-confirm-icon" id="ta-confirm-icon" style="display:none;">⚠️</div>
-          <div class="ta-modal-title" id="ta-confirm-title" style="text-align:center;">Confirmar</div>
-          <div id="ta-confirm-message" class="ta-confirm-message"></div>
-          <div class="ta-modal-actions">
-            <button id="ta-confirm-cancel" class="ta-confirm-cancel-btn" type="button">Cancelar</button>
-            <button id="ta-confirm-ok" class="ta-btn-add" type="button" style="flex:1;">OK</button>
-          </div>
-        </div>
-      </div>
-    `;
+      <div class="ta-secondary-view" id="ta-secondary-view" hidden></div>
+      <div class="ta-modal-overlay" id="ta-modal-overlay"><div class="ta-modal"></div></div>
+      <div class="ta-modal-overlay" id="ta-confirm-overlay"><section class="ta-modal"><h2 class="ta-confirm-title" id="ta-confirm-title">Confirmar</h2><div class="ta-confirm-message" id="ta-confirm-message"></div><div class="ta-modal-actions"><button id="ta-confirm-dismiss" class="ta-secondary" type="button" hidden>Cancelar</button><button id="ta-confirm-cancel" class="ta-secondary" type="button">Cancelar</button><button id="ta-confirm-ok" class="ta-primary" type="button">OK</button></div></section></div>
+      <button class="ta-resizer-corner" id="ta-res-corner" type="button" aria-label="Redimensionar widget; use as setas"></button>`;
     return widget;
   }
 
-  // ---------------------------------------------------------------------
-  // GEOMETRIA (posição e tamanho persistentes)
-  // ---------------------------------------------------------------------
+  function showProductView(view) {
+    if (applyingPreset) return;
+    closeCardMenus();
+    secondaryView = view;
+    organizingGroups = view === 'groups';
+    const widget = document.getElementById('ticketai-widget');
+    widget?.classList.remove('is-peek', 'is-minimized');
+    peekMode = false;
+    render();
+  }
+
+  function renderSecondaryView() {
+    const panel = document.getElementById('ta-secondary-view');
+    if (!panel) return;
+    panel.hidden = secondaryView === 'list';
+    document.getElementById('ta-body').hidden = secondaryView !== 'list';
+    if (panel.hidden) return;
+    const option = (action,title,description,icon,danger='') => `<button type="button" data-ta-action="${action}" class="${danger}">${uiIcon(icon)}<span>${title}${description?`<small>${description}</small>`:''}</span></button>`;
+    if (secondaryView === 'options') {
+      panel.innerHTML = viewHeading('Opções','Presets, backups e modos do widget.') + `<div class="ta-view-scroll ta-settings"><div class="ta-action-list">
+        ${option('select-mode','Selecionar presets','Apagar vários de uma vez','select')}
+        ${option('groups','Organizar grupos','Arrastar ou mover com setas','groups')}
+        ${option('export','Exportar backup','Gerar JSON dos seus presets','download')}
+        ${option('import','Importar backup','Ler arquivo ou colar JSON','upload')}
+        ${option('delete-all','Apagar todos','Confirmação e desfazer por 20 segundos','trash','ta-danger')}
+        </div><div class="ta-action-list">${option('compact','Modo compacto','Um preset por vez · Alt+W · roda do mouse','compact')}${option('reset-geometry','Restaurar posição e tamanho','','resize')}${option('help','Ajuda e atalhos','','help')}</div></div>` + viewFooter('<button type="button" class="ta-primary" data-ta-action="back">Voltar aos presets</button>');
+    } else if (secondaryView === 'groups') {
+      const names = getOrderedGroupNames();
+      panel.innerHTML = viewHeading('Organizar grupos','Arraste um grupo ou use as setas para reposicionar.') + `<div class="ta-view-scroll" style="padding-top:10px">${names.map((g,i)=>`<div class="ta-group-order ta-group-organizing" draggable="true" data-group="${escapeHtml(g)}"><span class="ta-grip">${uiIcon('grip')}</span><div class="ta-group-name">${escapeHtml(g)}<small>${presets.filter(p=>(p.group||'GERAL')===g).length} presets</small></div><button class="ta-icon" type="button" data-ta-action="group-up" data-group="${escapeHtml(g)}" aria-label="Mover ${escapeHtml(g)} para cima" ${i===0?'disabled':''}>${uiIcon('up')}</button><button class="ta-icon" type="button" data-ta-action="group-down" data-group="${escapeHtml(g)}" aria-label="Mover ${escapeHtml(g)} para baixo" ${i===names.length-1?'disabled':''}>${uiIcon('down')}</button></div>`).join('') || '<p class="ta-newpreset-help">Crie um preset para organizar os grupos.</p>'}</div>` + viewFooter('<button type="button" class="ta-primary" data-ta-action="back">Concluir</button>');
+    } else {
+      const exporting = secondaryView === 'export';
+      panel.innerHTML = viewHeading(exporting?'Exportar backup':'Importar backup',exporting?'Seus presets em um arquivo JSON.':'O arquivo será lido localmente.') + `<div class="ta-view-scroll ta-settings">${exporting?'':'<label class="ta-backup-label">Selecionar arquivo JSON<input id="ta-import-file" type="file" accept=".json,application/json"></label>'}<label class="ta-backup-label">${exporting?'Prévia do JSON':'Ou cole o JSON do backup'}<textarea id="ta-backup-json" class="ta-backup-input" spellcheck="false" ${exporting?'readonly':''}>${escapeHtml(exporting?JSON.stringify(presets,null,2):backupDraft)}</textarea></label><p class="ta-newpreset-help">${exporting?'Guarde este arquivo para restaurar seus presets.':'Aceita presets legados e campos dinâmicos. Nome e grupo identificam duplicados.'}</p>${backupError?`<p class="ta-backup-error" role="alert">${escapeHtml(backupError)}</p>`:''}</div>` + viewFooter(`<button type="button" class="ta-secondary" data-ta-action="options">Voltar</button><button type="button" class="ta-primary" data-ta-action="${exporting?'download':'process-import'}">${uiIcon(exporting?'download':'upload')}${exporting?'Baixar JSON':'Importar presets'}</button>`);
+      if (!exporting) {
+        panel.querySelector('#ta-backup-json').oninput = e => {backupDraft=e.target.value;};
+        panel.querySelector('#ta-import-file').onchange = e => {
+          const file=e.target.files[0]; if(!file)return;
+          const reader=new FileReader(); reader.onload=()=>{backupDraft=String(reader.result||'');backupError='';renderSecondaryView();};
+          reader.onerror=()=>{backupError='Não foi possível ler o arquivo.';renderSecondaryView();}; reader.readAsText(file);
+        };
+      }
+    }
+  }
+
+  function showProductHelp() {
+    showConfirmModal('',{title:'Ajuda e atalhos',okOnly:true,okText:'Entendi',contentHtml:'<div class="ta-help-content"><dl><dt>Alt + Q</dt><dd>Abrir ou alternar minimizado / expandido.</dd><dt>Alt + W</dt><dd>Ativar ou sair do modo compacto.</dd><dt>Esc</dt><dd>Cancelar próximas etapas da aplicação; fora dela, fechar menus e diálogos.</dd><dt>Modo compacto</dt><dd>Use a roda do mouse ou as setas para trocar de preset.</dd><dt>Posição e tamanho</dt><dd>Arraste o cabeçalho. Redimensione pelo canto inferior direito ou use as setas com esse controle focado.</dd></dl></div>'});
+  }
+
 
   function saveGeometry(widget) {
     const geom = {
       left: widget.offsetLeft,
       top: widget.offsetTop,
-      width: widget.offsetWidth,
-      height: widget.offsetHeight
+      width: widget.classList.contains('is-peek') ? (parseFloat(widget.style.width) || 440) : widget.offsetWidth,
+      height: widget.classList.contains('is-peek') || widget.classList.contains('is-minimized')
+        ? (parseFloat(widget.style.height) || 670) : widget.offsetHeight
     };
     chrome.storage.local.set({ ticketaiGeom: geom });
+  }
+
+  function constrainGeometry(g, viewportWidth, viewportHeight) {
+    const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const width = Math.min(Math.max(296, number(g.width, 440)), Math.max(1, viewportWidth - 12));
+    const height = Math.min(Math.max(350, number(g.height, 670)), Math.max(1, viewportHeight - 12));
+    return {width, height,
+      left: Math.max(6, Math.min(number(g.left, viewportWidth - width - 20), viewportWidth - width - 6)),
+      top: Math.max(6, Math.min(number(g.top, 20), viewportHeight - height - 6))};
+  }
+
+  function fitWidgetToViewport(widget) {
+    if (window.innerWidth <= 0 || window.innerHeight <= 0 || widget.style.display === 'none') return;
+    const g = constrainGeometry({left:parseFloat(widget.style.left) || widget.offsetLeft, top:parseFloat(widget.style.top) || widget.offsetTop,
+      width:parseFloat(widget.style.width) || widget.offsetWidth,
+      height:parseFloat(widget.style.height) || 670}, window.innerWidth, window.innerHeight);
+    Object.assign(widget.style, {left:`${g.left}px`, top:`${g.top}px`, right:'auto', width:`${g.width}px`, height:`${g.height}px`});
   }
 
   function applySavedGeometry(widget) {
     chrome.storage.local.get(['ticketaiGeom'], (res) => {
       const g = res.ticketaiGeom;
-      if (!g) return;
-      widget.style.left = g.left + 'px';
-      widget.style.top = g.top + 'px';
+      const bounded = constrainGeometry(g || {}, window.innerWidth, window.innerHeight);
+      widget.style.left = bounded.left + 'px';
+      widget.style.top = bounded.top + 'px';
       widget.style.right = 'auto';
-      widget.style.width = g.width + 'px';
-      widget.style.height = g.height + 'px';
+      widget.style.width = bounded.width + 'px';
+      widget.style.height = bounded.height + 'px';
     });
   }
 
@@ -1936,12 +1466,15 @@
         } else if (side === 'bottom') {
           const newHeight = startHeight + (mE.clientY - startY);
           if (newHeight > 300) widget.style.height = newHeight + 'px';
+        } else if (side === 'corner') {
+          widget.style.width = Math.max(296,startWidth+mE.clientX-startX)+'px';
+          widget.style.height = Math.max(350,startHeight+mE.clientY-startY)+'px';
         }
       };
       const onMouseUp = () => {
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
-        saveGeometry(widget);
+        fitWidgetToViewport(widget); saveGeometry(widget);
       };
       window.addEventListener('mousemove', onMouseMove); window.addEventListener('mouseup', onMouseUp);
     };
@@ -1949,6 +1482,15 @@
     document.getElementById('ta-res-r').onmousedown = (e) => startResizing(e, 'right');
     document.getElementById('ta-res-t').onmousedown = (e) => startResizing(e, 'top');
     document.getElementById('ta-res-b').onmousedown = (e) => startResizing(e, 'bottom');
+    const corner=document.getElementById('ta-res-corner');
+    corner.onmousedown=e=>startResizing(e,'corner');
+    corner.onkeydown=e=>{
+      if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;
+      e.preventDefault();
+      const width=widget.offsetWidth+(e.key==='ArrowLeft'?-20:e.key==='ArrowRight'?20:0);
+      const height=widget.offsetHeight+(e.key==='ArrowUp'?-20:e.key==='ArrowDown'?20:0);
+      widget.style.width=width+'px';widget.style.height=height+'px';fitWidgetToViewport(widget);saveGeometry(widget);
+    };
   }
 
   function setupDrag(widget) {
@@ -1963,7 +1505,7 @@
       }
     });
     document.addEventListener('mouseup', () => {
-      if (drag) { drag = false; saveGeometry(widget); }
+      if (drag) { drag = false; fitWidgetToViewport(widget); saveGeometry(widget); }
     });
   }
 
@@ -1974,6 +1516,12 @@
   // usuário colocou, em qualquer troca de modo. Se precisar reposicionar,
   // o cabeçalho continua arrastável mesmo com o modo compacto ativo.
   function togglePeek(widget) {
+    closeModal();
+    closeCardMenus();
+    secondaryView = 'list';
+    organizingGroups = false;
+    selectMode = false;
+    selectedIds.clear();
     widget.classList.remove('is-minimized');
     widget.classList.add('ta-anim');
     widget.classList.toggle('is-peek');
@@ -1994,30 +1542,48 @@
   }
 
   function setupHeaderButtons(widget) {
-    const peekBtn = document.getElementById('ta-btn-peek');
-    if (peekBtn) {
-      peekBtn.onclick = (e) => {
-        e.stopPropagation();
-        togglePeek(widget);
-      };
-    }
-    document.getElementById('ta-btn-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(widget); };
-    document.getElementById('ta-btn-close').onclick = () => widget.style.display = 'none';
+    document.getElementById('ta-peek-prev').onclick=()=>{peekIndex=Math.max(0,peekIndex-1);renderList();};
+    document.getElementById('ta-peek-next').onclick=()=>{peekIndex=Math.min(getFilteredPresets().length-1,peekIndex+1);renderList();};
+    document.getElementById('ta-btn-peek').onclick=()=>togglePeek(widget);
+    document.getElementById('ta-btn-min').onclick=()=>toggleMinimize(widget);
+    document.getElementById('ta-btn-close').onclick=()=>{closeCardMenus();widget.style.display='none';};
+    document.getElementById('ta-btn-help').onclick=()=>showProductHelp();
+  }
 
-    const helpBtn = document.getElementById('ta-btn-help');
-    const helpPopover = document.getElementById('ta-help-popover');
-    helpBtn.onclick = (e) => {
-      e.stopPropagation();
-      helpPopover.classList.toggle('is-open');
-    };
-    document.addEventListener('click', (e) => {
-      if (!helpPopover.classList.contains('is-open')) return;
-      if (e.target.closest('#ta-help-popover') || e.target.closest('#ta-btn-help')) return;
-      helpPopover.classList.remove('is-open');
+  function setupDesignInteractions(widget) {
+    document.addEventListener('click', event => {
+      if (!event.target.closest('.ta-preset-card')) closeCardMenus();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && helpPopover.classList.contains('is-open')) helpPopover.classList.remove('is-open');
+    document.addEventListener('keydown', event => {
+      if (widget.style.display === 'none' || event.defaultPrevented) return;
+      const confirm = document.getElementById('ta-confirm-overlay');
+      const editor = document.getElementById('ta-modal-overlay');
+      const activeDialog = confirm?.classList.contains('is-visible') ? confirm
+        : editor?.classList.contains('is-visible') ? editor : null;
+      if (event.key === 'Escape') {
+        if (activeDialog === confirm) {
+          const cancel = document.getElementById('ta-confirm-cancel');
+          const dismiss=document.getElementById('ta-confirm-dismiss');
+          (!dismiss.hidden?dismiss:cancel.style.display === 'none' ? document.getElementById('ta-confirm-ok') : cancel).click();
+        } else if (activeDialog === editor) closeModal();
+        else {
+          closeCardMenus();
+          if (secondaryView !== 'list') showProductView('list');
+          if (selectMode) exitSelectMode();
+        }
+      }
+      if (event.key === 'Tab' && activeDialog) {
+        const controls = Array.from(activeDialog.querySelectorAll('button,input,textarea,select,a[href],summary'))
+          .filter(el => !el.disabled && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !activeDialog.contains(document.activeElement))) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !activeDialog.contains(document.activeElement))) {
+          event.preventDefault(); first?.focus();
+        }
+      }
     });
+    window.addEventListener('resize', () => fitWidgetToViewport(widget));
   }
 
   // Rolar o mouse dentro do modo compacto avança/retrocede um preset por vez.
@@ -2108,6 +1674,11 @@
   }
 
   function openModal(preset = null) {
+    showProductView('list');
+    closeCardMenus();
+    const widget = document.getElementById('ticketai-widget');
+    widget?.classList.remove('is-peek', 'is-minimized');
+    peekMode = false;
     const fields = Array.isArray(preset?.fields)
       ? preset.fields
       : betaLegacyFields(preset);
@@ -2117,13 +1688,14 @@
   function closeModal() {
     document.getElementById('ta-modal-overlay').classList.remove('is-visible');
     editingId = null;
+    document.getElementById('ta-btn-add')?.focus();
   }
 
   // Modal de confirmação/aviso dentro do próprio widget, substituindo
   // confirm()/alert() nativos do navegador (que aparecem fora da extensão,
   // atrás/sobre a página do Hubspot, e quebram a experiência).
   function showConfirmModal(message, opts = {}) {
-    const { okOnly = false, title = 'Confirmar', okText = 'OK', danger = false } = opts;
+    const { okOnly = false, title = 'Confirmar', okText = 'OK', cancelText = 'Cancelar', danger = false, allowDismiss = false, contentHtml = '' } = opts;
     return new Promise((resolve) => {
       const overlay = document.getElementById('ta-confirm-overlay');
       const iconEl = document.getElementById('ta-confirm-icon');
@@ -2131,24 +1703,35 @@
       const msgEl = document.getElementById('ta-confirm-message');
       const okBtn = document.getElementById('ta-confirm-ok');
       const cancelBtn = document.getElementById('ta-confirm-cancel');
+      const dismissBtn = document.getElementById('ta-confirm-dismiss');
       if (!overlay || !msgEl || !okBtn || !cancelBtn) { resolve(true); return; }
 
       titleEl.textContent = title;
-      msgEl.textContent = message;
+      if(contentHtml)msgEl.innerHTML=contentHtml;else msgEl.textContent = message;
       okBtn.textContent = okText;
-      cancelBtn.style.display = okOnly ? 'none' : 'block';
+      cancelBtn.textContent = cancelText;
+      cancelBtn.style.display = okOnly ? 'none' : '';
+      dismissBtn.hidden = !allowDismiss;
       if (iconEl) iconEl.style.display = danger ? 'block' : 'none';
       okBtn.classList.toggle('ta-confirm-ok-danger', danger);
       overlay.classList.add('is-visible');
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'ta-confirm-title');
+      const previousFocus = document.activeElement;
+      (danger && !okOnly ? cancelBtn : okBtn).focus();
 
       const cleanup = (result) => {
         overlay.classList.remove('is-visible');
         okBtn.onclick = null;
         cancelBtn.onclick = null;
+        dismissBtn.onclick = null;
+        if (previousFocus?.isConnected) previousFocus.focus();
         resolve(result);
       };
       okBtn.onclick = () => cleanup(true);
       cancelBtn.onclick = () => cleanup(false);
+      dismissBtn.onclick = () => cleanup(null);
     });
   }
 
@@ -2192,40 +1775,17 @@
   }
 
   function setupSelectionMode() {
-    document.getElementById('ta-btn-select-mode').onclick = () => {
-      selectMode = true;
-      selectedIds.clear();
-      document.getElementById('ta-selection-toolbar').classList.add('is-visible');
-      closePopover();
-      render();
+    document.getElementById('ta-btn-selection-cancel').onclick=exitSelectMode;
+    document.getElementById('ta-btn-select-all').onclick=()=>{
+      const visible=getFilteredPresets(),all=visible.length&&visible.every(p=>selectedIds.has(p.id));
+      visible.forEach(p=>all?selectedIds.delete(p.id):selectedIds.add(p.id));renderList();updateSelectionUI();
     };
-
-    document.getElementById('ta-btn-selection-cancel').onclick = () => exitSelectMode();
-
-    document.getElementById('ta-btn-select-all').onclick = () => {
-      const visible = getFilteredPresets();
-      const allSelected = visible.length > 0 && visible.every(p => selectedIds.has(p.id));
-      if (allSelected) visible.forEach(p => selectedIds.delete(p.id));
-      else visible.forEach(p => selectedIds.add(p.id));
-      renderList();
-      updateSelectionUI();
-    };
-
-    document.getElementById('ta-btn-selection-delete').onclick = async () => {
-      if (selectedIds.size === 0) { await showAlertModal('Nenhum preset selecionado.'); return; }
-      const count = selectedIds.size;
-      const ok = await showConfirmModal(`Apagar os ${count} presets selecionados? Esta ação não pode ser desfeita.`, { title: 'Apagar presets', okText: 'OK, apagar', danger: true });
-      if (ok) {
-        deletePresetsWithUndo(Array.from(selectedIds));
-        selectMode = false;
-        document.getElementById('ta-selection-toolbar').classList.remove('is-visible');
-      }
+    document.getElementById('ta-btn-selection-delete').onclick=async()=>{
+      if(!selectedIds.size)return;
+      const ok=await showConfirmModal('Excluir os '+selectedIds.size+' presets selecionados? Você poderá desfazer por 20 segundos.',{title:'Excluir presets?',okText:'Excluir',danger:true});
+      if(ok){const ids=Array.from(selectedIds);selectMode=false;selectedIds.clear();deletePresetsWithUndo(ids);}
     };
   }
-
-  // ---------------------------------------------------------------------
-  // RENDERIZAÇÃO
-  // ---------------------------------------------------------------------
 
   function getFilteredPresets() {
     if (!searchQuery) return presets;
@@ -2266,15 +1826,14 @@
     card.innerHTML = `
       <div class="ta-progress-bar"></div>
       <div class="ta-card-header-row">
-        <span class="ta-preset-name"></span>
-        <div class="ta-card-right">
-          <label class="ta-preset-checkbox-wrap"><input type="checkbox" class="ta-checkbox" ${selectedIds.has(p.id) ? 'checked' : ''}></label>
-          <div class="ta-preset-actions">
-            <span class="ta-icon-btn ta-edit" title="Editar preset">✏️</span>
-            <span class="ta-icon-btn ta-dup" title="Duplicar preset">⧉</span>
-            <span class="ta-icon-btn ta-danger ta-del" title="Apagar preset">🗑️</span>
-          </div>
-        </div>
+        <label class="ta-preset-checkbox-wrap"><input type="checkbox" class="ta-checkbox" aria-label="Selecionar ${escapeHtml(p.name)}" ${selectedIds.has(p.id) ? 'checked' : ''}></label>
+        <button type="button" class="ta-apply-preset" ${applyingPreset ? 'disabled' : ''} aria-label="${selectMode ? 'Selecionar' : 'Aplicar'} ${escapeHtml(p.name)}"><span class="ta-preset-name"></span><span class="ta-apply-hint" role="status" aria-live="polite">${uiIcon('arrow')}</span></button>
+        <button type="button" class="ta-more" ${applyingPreset ? 'disabled' : ''} aria-label="Opções de ${escapeHtml(p.name)}" aria-expanded="false">${uiIcon('more')}</button>
+      </div>
+      <div class="ta-preset-actions" hidden>
+        <button type="button" class="ta-icon-btn ta-edit">${uiIcon('edit')}Editar</button>
+        <button type="button" class="ta-icon-btn ta-dup">${uiIcon('copy')}Duplicar</button>
+        <button type="button" class="ta-icon-btn ta-danger ta-del">${uiIcon('trash')}Excluir</button>
       </div>
     `;
     card.querySelector('.ta-preset-name').innerHTML = highlightMatch(p.name, searchQuery);
@@ -2289,130 +1848,84 @@
     fieldSummary.hidden = true;
     fieldSummary.setAttribute('role', 'status');
     card.appendChild(fieldSummary);
+    const confirmationDetails=document.createElement('div');
+    confirmationDetails.className='ta-confirm-details';confirmationDetails.hidden=true;
+    confirmationDetails.innerHTML='<div class="ta-confirm-count"></div><div class="ta-confirm-pending"></div><div class="ta-confirm-actions"><button type="button" class="ta-confirm-retry">Tentar novamente</button><button type="button" class="ta-confirm-dismiss">Fechar</button></div>';
+    card.appendChild(confirmationDetails);
+    confirmationDetails.querySelector('.ta-confirm-retry').onclick=e=>{e.stopPropagation();if(!applyingPreset)applyPresetToCard(p,card);};
+    confirmationDetails.querySelector('.ta-confirm-dismiss').onclick=e=>{e.stopPropagation();clearCardConfirmation();lastApplicationFeedback=null;closePreviousFeedback();};
     if (lastApplicationFeedback?.id === String(p.id)) {
       const {fields, results, activeLabel} = lastApplicationFeedback;
       showFieldResults(card, fields, results, activeLabel);
     }
 
-    card.onclick = async (e) => {
+    card.querySelector('.ta-apply-preset').onclick = async (e) => {
+      e.stopPropagation();
       if (organizingGroups) return;
-      if (selectMode) { e.stopPropagation(); toggleSelect(p.id); return; }
-      if (e.target.closest('.ta-preset-actions')) return;
+      if (selectMode) { toggleSelect(p.id); return; }
+      if(cardConfirmation?.id===String(p.id)&&cardConfirmation.status==='partial'){
+        cardConfirmation.expanded=!cardConfirmation.expanded;renderCardConfirmation(card);return;
+      }
       await applyPresetToCard(p, card);
+    };
+    const actionMenu=card.querySelector('.ta-preset-actions');
+    card.querySelector('.ta-more').onclick = e => {
+      e.stopPropagation();
+      if (applyingPreset) return;
+      const actions = actionMenu;
+      const open = actions.hidden || !actions.isConnected;
+      closeCardMenus();
+      if(!open)return;
+      const widget=document.getElementById('ticketai-widget');
+      widget.appendChild(actions);actions.hidden=false;floatingCardMenu=actions;
+      const rect=card.getBoundingClientRect(),bounds=widget.getBoundingClientRect();
+      const menuHeight=actions.offsetHeight;
+      actions.style.right='12px';actions.style.top=Math.max(44,Math.min(rect.bottom-bounds.top-4,bounds.height-menuHeight-12))+'px';
+      card.querySelector('.ta-more').setAttribute('aria-expanded', String(open));
     };
     card.querySelector('.ta-checkbox').onclick = (e) => { e.stopPropagation(); toggleSelect(p.id); };
     card.querySelector('.ta-edit').onclick = (e) => { e.stopPropagation(); openModal(p); };
     card.querySelector('.ta-dup').onclick = (e) => { e.stopPropagation(); duplicatePreset(p); };
     card.querySelector('.ta-del').onclick = async (e) => {
       e.stopPropagation();
-      const ok = await showConfirmModal(`Apagar o preset "${p.name}"? Esta ação não pode ser desfeita.`, { title: 'Apagar preset', okText: 'OK, apagar', danger: true });
+      const ok = await showConfirmModal(`Excluir o preset "${p.name}"? Você poderá desfazer por 20 segundos.`, { title: 'Excluir preset', okText: 'Excluir', danger: true });
       if (ok) deletePresetsWithUndo([p.id]);
     };
 
+    renderCardConfirmation(card);
     return card;
+  }
+
+  function closeCardMenus() {
+    if(floatingCardMenu){floatingCardMenu.hidden=true;floatingCardMenu.remove();floatingCardMenu=null;}
+    const widget = document.getElementById('ticketai-widget');
+    for (const card of widget?.querySelectorAll('.ta-preset-card') || []) {
+      const actions = card.querySelector('.ta-preset-actions');
+      if (actions) actions.hidden = true;
+      card.querySelector('.ta-more')?.setAttribute('aria-expanded', 'false');
+    }
   }
 
   // Renderiza só a lista de presets (usado a cada digitação na busca, scroll
   // do modo compacto, etc.), sem tocar no input de busca, para não perder o
   // foco/cursor a cada atualização.
   function renderList() {
-    const list = document.getElementById('ta-list');
-    if (!list) return;
-    list.innerHTML = '';
-
-    const countEl = document.getElementById('ta-preset-count');
-    if (countEl) countEl.textContent = `${presets.length} preset${presets.length === 1 ? '' : 's'} cadastrado${presets.length === 1 ? '' : 's'}`;
-
-    const filtered = getFilteredPresets();
-
-    if (filtered.length === 0) {
-      renderEmptyState(list);
-      return;
+    const list=document.getElementById('ta-list');if(!list)return;
+    closeCardMenus();list.innerHTML='';
+    const filtered=getFilteredPresets(),names=getOrderedGroupNames();
+    const count=document.getElementById('ta-preset-count');
+    if(count)count.textContent=presets.length+' presets'+(searchQuery?' · '+filtered.length+' encontrados':'');
+    peekIndex=Math.max(0,Math.min(peekIndex,filtered.length-1));
+    const ordered=names.flatMap(g=>filtered.filter(p=>(p.group||'GERAL')===g));
+    const position=document.getElementById('ta-peek-position'),previous=document.getElementById('ta-peek-prev'),next=document.getElementById('ta-peek-next');
+    if(position)position.textContent=ordered.length?(ordered[peekIndex].group||'GERAL')+' · '+(peekIndex+1)+' de '+ordered.length:'Nenhum preset';
+    if(previous)previous.disabled=peekIndex===0;if(next)next.disabled=peekIndex>=ordered.length-1;
+    if(!filtered.length){renderEmptyState(list);return;}
+    if(peekMode){list.appendChild(buildCard(ordered[peekIndex]));return;}
+    for(const group of names){const groupItems=filtered.filter(p=>(p.group||'GERAL')===group);if(!groupItems.length)continue;
+      const label=document.createElement('div');label.className='ta-group-label';label.innerHTML=highlightMatch(group,searchQuery)+' <span>'+groupItems.length+'</span>';list.appendChild(label);
+      groupItems.forEach(p=>list.appendChild(buildCard(p)));
     }
-
-    if (peekMode) {
-      peekIndex = Math.min(peekIndex, filtered.length - 1);
-      list.appendChild(buildCard(filtered[peekIndex]));
-      return;
-    }
-
-    const groups = groupPresets(filtered);
-    const names = Object.keys(groups).sort((a, b) => {
-      const ai = groupOrder.indexOf(a), bi = groupOrder.indexOf(b);
-      if (ai < 0 && bi < 0) return a.localeCompare(b, 'pt-BR');
-      if (ai < 0) return 1; if (bi < 0) return -1; return ai - bi;
-    });
-    names.forEach(groupName => {
-      const label = document.createElement('div');
-      label.className = 'ta-group-label';
-      label.textContent = `${groupName} · ${groups[groupName].length}`;
-      label.dataset.group = groupName;
-      // O arraste nativo pode sequestrar o ponteiro no widget; usamos os
-      // eventos de ponteiro abaixo para manter a origem e o destino corretos.
-      label.draggable = false;
-      label.classList.toggle('ta-group-organizing', organizingGroups);
-      if (organizingGroups) {
-        label.title = 'Arraste para reposicionar';
-        const controls = document.createElement('span');
-        controls.className = 'ta-group-order-controls';
-        controls.innerHTML = '<button type="button" title="Mover grupo para cima">↑</button><button type="button" title="Mover grupo para baixo">↓</button>';
-        controls.querySelector('button').onclick = event => { event.stopPropagation(); moveGroup(groupName, -1); };
-        controls.querySelectorAll('button')[1].onclick = event => { event.stopPropagation(); moveGroup(groupName, 1); };
-        label.appendChild(controls);
-        label.ondragstart = event => { draggedGroup = groupName; draggedLabel = label; event.dataTransfer?.setData('text/plain', groupName); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; label.classList.add('is-dragging'); };
-        label.ondragend = () => { draggedGroup = null; draggedLabel?.classList.remove('is-dragging'); draggedLabel = null; draggedGhost?.remove(); draggedGhost = null; };
-        label.ondragover = event => event.preventDefault();
-        label.ondragenter = event => { event.preventDefault(); label.classList.add('is-drag-over'); };
-        label.ondragleave = () => label.classList.remove('is-drag-over');
-        label.ondrop = event => {
-          event.preventDefault();
-          label.classList.remove('is-drag-over');
-          if (!draggedGroup || draggedGroup === groupName) return;
-          reorderGroupBefore(draggedGroup, groupName);
-        };
-        label.onpointerdown = event => {
-          if (event.target.closest('button')) return;
-          event.preventDefault();
-          draggedGroup = groupName;
-          draggedLabel = label;
-          label.classList.add('is-dragging');
-          draggedGhost = label.cloneNode(true);
-          draggedGhost.className = 'ta-group-drag-ghost';
-          draggedGhost.querySelectorAll('button').forEach(button => button.remove());
-          const rect = label.getBoundingClientRect();
-          Object.assign(draggedGhost.style, { left:`${rect.left}px`, top:`${rect.top}px`, width:`${rect.width}px` });
-          document.body.appendChild(draggedGhost);
-        };
-        label.onpointermove = event => {
-          if (!draggedGroup) return;
-          if (draggedGhost) { draggedGhost.style.left = `${event.clientX - 20}px`; draggedGhost.style.top = `${event.clientY - 14}px`; }
-          const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest?.('.ta-group-organizing');
-          dragTargetGroup = target?.dataset?.group || null;
-          if (dragTargetLabel !== target) {
-            dragTargetLabel?.classList.remove('is-drag-over');
-            dragTargetLabel = target;
-            dragTargetLabel?.classList.add('is-drag-over');
-          }
-        };
-        label.onpointerup = event => {
-          const source = draggedGroup;
-          const target = dragTargetGroup || groupName;
-          if (!source || source === target) { draggedGroup = null; dragTargetGroup = null; draggedLabel?.classList.remove('is-dragging'); dragTargetLabel?.classList.remove('is-drag-over'); draggedLabel = null; dragTargetLabel = null; draggedGhost?.remove(); draggedGhost = null; return; }
-          event.preventDefault();
-          draggedGroup = null;
-          dragTargetGroup = null;
-          draggedLabel?.classList.remove('is-dragging');
-          dragTargetLabel?.classList.remove('is-drag-over');
-          draggedLabel = null;
-          dragTargetLabel = null;
-          draggedGhost?.remove();
-          draggedGhost = null;
-          reorderGroupBefore(source, target);
-        };
-      }
-      list.appendChild(label);
-      groups[groupName].forEach(p => list.appendChild(buildCard(p)));
-    });
   }
 
   function moveGroup(groupName, direction) {
@@ -2454,42 +1967,26 @@
   // Renderização completa: só usada quando algo estrutural muda (modo,
   // seleção, etc.), nunca a cada tecla digitada na busca.
   function render() {
-    const selectionToolbar = document.getElementById('ta-selection-toolbar');
-    if (selectionToolbar) selectionToolbar.classList.toggle('is-visible', selectMode);
-    updateSelectionUI();
-    const organizeButton = document.getElementById('ta-btn-organize-groups');
-    document.getElementById('ticketai-widget')?.classList.toggle('ta-organizing-groups', organizingGroups);
-    if (!dragPointerListenerInstalled) {
-      document.addEventListener('pointerup', event => {
-        if (!draggedGroup) return;
-        const source = draggedGroup;
-        const target = document.elementFromPoint?.(event.clientX, event.clientY)?.closest?.('.ta-group-organizing')?.dataset?.group || null;
-        draggedGroup = null;
-        draggedLabel?.classList.remove('is-dragging');
-        dragTargetLabel?.classList.remove('is-drag-over');
-        draggedLabel = null;
-        dragTargetLabel = null;
-        draggedGhost?.remove();
-        draggedGhost = null;
-        if (target && source !== target) reorderGroupBefore(source, target);
-      });
-      dragPointerListenerInstalled = true;
-    }
-    if (organizeButton) {
-      organizeButton.textContent = organizingGroups ? '✓' : '☷';
-      organizeButton.title = organizingGroups ? 'Concluir organização' : 'Organizar grupos';
-      organizeButton.classList.toggle('is-active', organizingGroups);
-      organizeButton.onclick = () => { organizingGroups = !organizingGroups; render(); };
-    }
-    renderList();
+    const toolbar=document.getElementById('ta-selection-toolbar');if(toolbar)toolbar.classList.toggle('is-visible',selectMode);
+    updateSelectionUI();renderList();renderSecondaryView();
   }
 
   function setupSearch() {
     const input = document.getElementById('ta-search-input');
+    const clear = document.getElementById('ta-search-clear');
     input.value = searchQuery;
+    clear.hidden = input.value.length === 0;
     input.oninput = (e) => {
       searchQuery = e.target.value;
+      clear.hidden = searchQuery.length === 0;
       renderList();
+    };
+    clear.onclick = () => {
+      input.value = '';
+      searchQuery = '';
+      clear.hidden = true;
+      renderList();
+      input.focus();
     };
   }
 
@@ -2497,145 +1994,61 @@
   // MENU DE OPÇÕES (ENGRENAGEM)
   // ---------------------------------------------------------------------
 
-  let popoverCloseTimer = null;
-
-  function clearPopoverAutoClose() {
-    if (popoverCloseTimer) { clearTimeout(popoverCloseTimer); popoverCloseTimer = null; }
-  }
-
-  function schedulePopoverAutoClose() {
-    clearPopoverAutoClose();
-    popoverCloseTimer = setTimeout(() => closePopover(), 15000);
-  }
-
-  function closePopover() {
-    clearPopoverAutoClose();
-    const popover = document.getElementById('ta-popover');
-    const gear = document.getElementById('ta-btn-gear');
-    if (popover) popover.classList.remove('is-open');
-    if (gear) gear.classList.remove('is-active');
-  }
+  function closePopover() { showProductView('list'); }
 
   function setupPopover() {
-    const gear = document.getElementById('ta-btn-gear');
-    const popover = document.getElementById('ta-popover');
-
-    gear.onclick = (e) => {
-      e.stopPropagation();
-      const isOpen = popover.classList.toggle('is-open');
-      gear.classList.toggle('is-active', isOpen);
-      if (isOpen) schedulePopoverAutoClose(); else clearPopoverAutoClose();
-    };
-
-    document.getElementById('ta-popover-close').onclick = (e) => {
-      e.stopPropagation();
-      closePopover();
-    };
-
-    document.addEventListener('click', (e) => {
-      if (!popover.classList.contains('is-open')) return;
-      if (e.target.closest('#ta-popover') || e.target.closest('#ta-btn-gear')) return;
-      closePopover();
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && popover.classList.contains('is-open')) closePopover();
-    });
-
-    popover.addEventListener('mouseenter', () => {
-      if (popover.classList.contains('is-open')) clearPopoverAutoClose();
-    });
-    popover.addEventListener('mouseleave', () => {
-      if (popover.classList.contains('is-open')) schedulePopoverAutoClose();
-    });
-
-    document.getElementById('ta-btn-export').onclick = async () => {
-      if (presets.length === 0) { await showAlertModal('Não há presets para exportar.'); return; }
-      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(presets, null, 2));
-      const a = document.createElement('a');
-      a.setAttribute('href', dataStr);
-      a.setAttribute('download', 'ticketai_presets.json');
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      closePopover();
-    };
-
-    document.getElementById('ta-btn-import').onclick = () => {
-      document.getElementById('ta-import-file').click();
-      schedulePopoverAutoClose();
-    };
-
-    document.getElementById('ta-import-file').onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const imported = JSON.parse(event.target.result);
-          if (!Array.isArray(imported)) { await showAlertModal('Arquivo inválido.'); e.target.value = ''; return; }
-          const valid = imported.filter(item => item && typeof item.name === 'string' && item.name.trim() !== '');
-          if (valid.length === 0) { await showAlertModal('Nenhum preset válido encontrado.'); e.target.value = ''; return; }
-
-          let idCounter = Date.now();
-          const existingIds = new Set(presets.map(p => p.id));
-          const normalized = valid.map(item => {
-            let id = (typeof item.id === 'number' && !isNaN(item.id)) ? item.id : idCounter++;
-            while (existingIds.has(id)) id = idCounter++;
-            existingIds.add(id);
-            return normalizeImportedPreset(item, id);
-          });
-
-          const identity = item => `${String(item.group || 'GERAL').trim().toLowerCase()}\u0000${String(item.name || '').trim().toLowerCase()}`;
-          const existingKeys = new Set(presets.map(identity));
-          const seenKeys = new Set();
-          const duplicateKeys = new Set();
-          normalized.forEach(item => {
-            const key = identity(item);
-            if (existingKeys.has(key) || seenKeys.has(key)) duplicateKeys.add(key);
-            seenKeys.add(key);
-          });
-          const duplicates = normalized.filter(item => duplicateKeys.has(identity(item)));
-          let toImport = normalized;
-          if (duplicates.length) {
-            const replace = await showConfirmModal(
-              `${duplicates.length} preset${duplicates.length === 1 ? '' : 's'} já existe${duplicates.length === 1 ? '' : 'm'} com o mesmo nome e grupo. Deseja substituir?`,
-              { title: 'Presets duplicados', okText: 'Substituir', cancelText: 'Manter atuais' }
-            );
-            if (replace) {
-              const duplicateSet = new Set(duplicates.map(identity));
-              presets = presets.filter(item => !duplicateSet.has(identity(item)));
-            } else {
-              const duplicateSet = new Set(duplicates.map(identity));
-              toImport = normalized.filter(item => !duplicateSet.has(identity(item)));
-            }
-          }
-          presets = [...presets, ...toImport];
-          save();
-          closePopover();
-        } catch (err) {
-          await showAlertModal('Erro ao ler o arquivo JSON.');
-        }
-        e.target.value = '';
-      };
-      reader.readAsText(file);
-    };
-
-    document.getElementById('ta-btn-delete-all').onclick = async (e) => {
-      e.stopPropagation();
-      if (presets.length === 0) { await showAlertModal('Não há presets cadastrados para apagar.'); return; }
-      const total = presets.length;
-      const ok = await showConfirmModal(`Apagar TODOS os ${total} presets cadastrados? Esta ação não pode ser desfeita.`, { title: 'Apagar tudo', okText: 'OK, apagar', danger: true });
-      if (ok) {
-        deletePresetsWithUndo(presets.map(p => p.id));
-        closePopover();
+    const widget=document.getElementById('ticketai-widget');
+    document.getElementById('ta-btn-gear').onclick=()=>showProductView('options');
+    document.getElementById('ta-btn-organize-groups').onclick=()=>showProductView('groups');
+    widget.addEventListener('click',async e=>{
+      const button=e.target.closest('button[data-ta-action]');if(!button)return;
+      const action=button.dataset.taAction;
+      if(applyingPreset)return;
+      if(action==='back'){showProductView('list');return;}
+      if(action==='options'||action==='groups'){showProductView(action);return;}
+      if(action==='help'){showProductHelp();return;}
+      if(action==='compact'){togglePeek(widget);return;}
+      if(action==='reset-geometry'){const g=constrainGeometry({},window.innerWidth,window.innerHeight);Object.assign(widget.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px',right:'auto'});saveGeometry(widget);showProductView('list');return;}
+      if(action==='group-up'||action==='group-down'){moveGroup(button.dataset.group,action==='group-up'?-1:1);return;}
+      if(action==='select-mode'){selectMode=true;selectedIds.clear();showProductView('list');return;}
+      if(action==='export'||action==='import'){backupDraft='';backupError='';showProductView(action);return;}
+      if(action==='download'){
+        if(!presets.length){await showAlertModal('Não há presets para exportar.');return;}
+        const link=document.createElement('a');link.href='data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(presets,null,2));link.download='ticketai_presets.json';document.body.appendChild(link);link.click();link.remove();return;
       }
-    };
+      if(action==='process-import'){await importBackupText(backupDraft);return;}
+      if(action==='delete-all'){
+        if(!presets.length){await showAlertModal('Não há presets cadastrados para apagar.');return;}
+        const confirmed=await showConfirmModal(`Excluir todos os ${presets.length} presets? Você poderá desfazer por 20 segundos.`,{title:'Excluir todos os presets?',okText:'Excluir',danger:true});
+        if(confirmed){secondaryView='list';deletePresetsWithUndo(presets.map(p=>p.id));}return;
+      }
+    });
+    widget.addEventListener('dragstart',e=>{const row=e.target.closest('.ta-group-organizing');if(!row)return;draggedGroup=row.dataset.group;e.dataTransfer?.setData('text/plain',draggedGroup);if(e.dataTransfer)e.dataTransfer.effectAllowed='move';row.classList.add('is-dragging');});
+    widget.addEventListener('dragover',e=>{const row=e.target.closest('.ta-group-organizing');if(!row||!draggedGroup)return;e.preventDefault();widget.querySelectorAll('.is-drag-over').forEach(el=>el.classList.remove('is-drag-over'));row.classList.add('is-drag-over');});
+    widget.addEventListener('drop',e=>{const row=e.target.closest('.ta-group-organizing');if(!row||!draggedGroup)return;e.preventDefault();const from=draggedGroup;draggedGroup=null;reorderGroupBefore(from,row.dataset.group);});
+    widget.addEventListener('dragend',()=>{draggedGroup=null;widget.querySelectorAll('.is-dragging,.is-drag-over').forEach(el=>el.classList.remove('is-dragging','is-drag-over'));});
   }
 
-  // ---------------------------------------------------------------------
-  // ATALHOS DE TECLADO
-  // ---------------------------------------------------------------------
+  async function importBackupText(raw) {
+    let imported;
+    try{const data=JSON.parse(raw);imported=Array.isArray(data)?data:data?.presets;if(!Array.isArray(imported))throw new Error();}
+    catch{backupError='JSON inválido. Informe uma lista de presets.';renderSecondaryView();return;}
+    const valid=imported.filter(p=>p&&typeof p.name==='string'&&p.name.trim());
+    if(!valid.length){backupError='Nenhum preset válido encontrado.';renderSecondaryView();return;}
+    let id=generateId();const normalized=valid.map(p=>normalizeImportedPreset(p,id++));
+    const identity=p=>`${String(p.group||'GERAL').trim().toLowerCase()}\u0000${p.name.trim().toLowerCase()}`;
+    const incoming=new Map(normalized.map(p=>[identity(p),p]));
+    const duplicates=[...incoming.keys()].filter(k=>presets.some(p=>identity(p)===k));
+    let replace=false;
+    if(duplicates.length){
+      replace=await showConfirmModal(`${duplicates.length} preset${duplicates.length===1?' já existe':'s já existem'} com o mesmo nome e grupo.`,{title:'Presets duplicados',okText:'Substituir',cancelText:'Manter atuais',allowDismiss:true});
+      if(replace===null)return;
+    }
+    if(replace)presets=presets.filter(p=>!duplicates.includes(identity(p)));
+    const toImport=[...incoming].filter(([key])=>replace||!duplicates.includes(key)).map(([,p])=>p);
+    presets.push(...toImport);backupDraft='';backupError='';secondaryView='list';save();
+  }
+
 
   function ensureWidgetVisible() {
     let widget = document.getElementById('ticketai-widget');
@@ -2699,6 +2112,7 @@
     setupResize(widget);
     setupDrag(widget);
     setupHeaderButtons(widget);
+    setupDesignInteractions(widget);
     setupPeekWheel();
     setupPopover();
     setupModal();

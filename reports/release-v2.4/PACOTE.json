@@ -1,0 +1,16 @@
+{
+  "version": "2.4",
+  "files": [
+    "icons/icon128.png",
+    "icons/icon16.png",
+    "icons/icon32.png",
+    "icons/icon48.png",
+    "manifest.json",
+    "background.js",
+    "content.js"
+  ],
+  "contentSha256": "4E8ED44EA9548CF960D77FA660683ADDF510B4E024B65832F83AF5D0325F0364",
+  "packageSha256": "02C3F51E5EF65B22DA87AD23BD2B604AF2A9CE1D5234586EF4619F4FFC77FB96",
+  "codeMatchesSource": true,
+  "published": false
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<title>TicketAI — ambiente local de teste</title>
+<style>
+body {font:16px system-ui;background:#eef2f5;margin:24px;color:#25364a}
+main {width:550px} [role=dialog] {padding:24px;background:white;border-radius:12px}
+.FormControl__LabelWrapper {margin:16px 0 6px}
+textarea {width:95%;height:65px} button {padding:8px;cursor:pointer}
+.Select {position:fixed;left:60px;top:180px;background:white;border:1px solid #8b9aad;z-index:20;padding:12px;width:300px}
+.Select-menu {display:flex;flex-direction:column;gap:6px}
+.Select[hidden] {display:none}
+#saved {white-space:pre-wrap;max-height:150px;overflow:auto;font-size:11px}
+</style>
+<main>
+<h1>Ambiente local de teste</h1>
+<p>Controles simulados. Nenhum dado é enviado ao HubSpot.</p>
+<button id="external" title="Dúvida">Elemento externo — cliques: 0</button>
+<div role="dialog" aria-label="Propriedades dependentes">
+<h2>Propriedades dependentes</h2>
+<div data-test-id="hs_pipeline_stage-dependents" id="fields"></div>
+</div>
+<h3>Dados salvos no armazenamento simulado</h3><pre id="saved"></pre>
+</main>
+<script src="/fixture.js"></script>
+<script src="/content.js"></script>
+<script>document.dispatchEvent(new KeyboardEvent('keydown',{key:'q',altKey:true,bubbles:true}));</script>
+</html>
